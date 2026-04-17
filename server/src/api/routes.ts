@@ -5,7 +5,7 @@
 import { FastifyInstance } from "fastify";
 import QRCode from "qrcode";
 import * as db from "../db/queries";
-import { getSocket, getCurrentQR, logoutWhatsApp } from "../whatsapp/client";
+import { getSocket, getCurrentQR, logoutWhatsApp, isWhatsAppConnected } from "../whatsapp/client";
 import { subscribeToContact, unsubscribeFromContact, getCurrentStatuses } from "../whatsapp/presence";
 import { getAnalytics } from "../services/analytics";
 import { saveSubscription } from "../services/notify";
@@ -64,8 +64,9 @@ export async function registerRoutes(app: FastifyInstance) {
 
   // JSON endpoint for the dashboard Sign In modal.
   app.get("/api/qr/data", async () => {
+    if (isWhatsAppConnected()) return { connected: true, qrDataUrl: null };
     const qr = getCurrentQR();
-    if (!qr) return { connected: true, qrDataUrl: null };
+    if (!qr) return { connected: false, qrDataUrl: null }; // waiting for QR
     const qrDataUrl = await QRCode.toDataURL(qr, { width: 360, margin: 2 });
     return { connected: false, qrDataUrl };
   });

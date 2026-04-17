@@ -25,6 +25,10 @@ export type ConnectionCallback = (state: Partial<ConnectionState>) => void;
 let socket: WASocket | null = null;
 let connectionListeners: ConnectionCallback[] = [];
 let currentQR: string | null = null;
+// True only while a socket is actively open and authenticated with WhatsApp.
+// Separate from `currentQR === null` because right after logout the QR hasn't
+// been regenerated yet (reconnect is pending), but we are NOT connected.
+let isConnected = false;
 
 export function onConnectionChange(cb: ConnectionCallback) {
   connectionListeners.push(cb);
@@ -35,9 +39,13 @@ export function getSocket(): WASocket {
   return socket;
 }
 
-/** Returns the latest QR string if awaiting scan, or null if already authenticated. */
+/** Returns the latest QR string if awaiting scan, or null if already authenticated / pending reconnect. */
 export function getCurrentQR(): string | null {
   return currentQR;
+}
+
+export function isWhatsAppConnected(): boolean {
+  return isConnected;
 }
 
 /**
@@ -46,6 +54,11 @@ export function getCurrentQR(): string | null {
  */
 export async function logoutWhatsApp(): Promise<void> {
   if (!socket) throw new Error("WhatsApp client not initialised");
+
+  // Flip state IMMEDIATELY so the Sign In modal doesn't poll "already connected"
+  // in the 2-second gap between this handler and the socket's close event.
+  isConnected = false;
+  currentQR = null;
 
   try {
     await socket.logout();
@@ -130,9 +143,11 @@ export async function connectWhatsApp(): Promise<WASocket> {
 
     if (connection === "open") {
       currentQR = null;
+      isConnected = true;
     }
 
     if (connection === "close") {
+      isConnected = false;
       const reason = (lastDisconnect?.error as Boom)?.output?.statusCode;
       const shouldReconnect = reason !== DisconnectReason.loggedOut;
 
