@@ -36,14 +36,34 @@ export function ContactDetail({ contactId, contact, onRemove }: Props) {
     loadAnalytics();
   }, [loadAnalytics]);
 
-  // Refetch analytics when THIS contact's presence changes (online/offline)
+  // Refetch analytics when THIS contact's presence changes (online/offline).
+  // The backend now awaits DB writes before firing the WS event, so 200 ms
+  // is plenty of margin. A second retry at 1500 ms catches any edge-case
+  // replication lag (e.g. separate read replica in future).
   useEffect(() => {
     const socket = getSocket();
     const handler = (update: PresenceUpdate) => {
-      if (update.contactId === contactId) {
-        // Small delay so the backend has time to write the session
-        setTimeout(loadAnalytics, 500);
-      }
+      if (update.contactId !== contactId) return;
+
+      const refresh = async () => {
+        try {
+          const data = await api.getAnalytics(contactId);
+          setAnalytics(data);
+
+          // If the contact just went offline but a session still looks "live"
+          // (no end_time), refetch once more after a short delay.
+          if (update.status === "offline") {
+            const stillOpen = data.recentSessions.some((s) => !s.end_time);
+            if (stillOpen) {
+              setTimeout(loadAnalytics, 1500);
+            }
+          }
+        } catch {
+          // retry on next periodic refresh
+        }
+      };
+
+      setTimeout(refresh, 200);
     };
     socket.on("presence:update", handler);
     return () => {

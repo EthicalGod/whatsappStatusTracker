@@ -88,8 +88,10 @@ export async function startTracking(sock: WASocket) {
 
     setTimeout(async () => {
       try {
+        // Pre-resolve LID so the first presence event can match immediately
+        await resolveAndCacheLid(sock, contact.jid);
         await withTimeout(sock.presenceSubscribe(contact.jid), 5000);
-        logger.debug({ jid: contact.jid, name: contact.name }, "Subscribed to presence");
+        logger.info({ jid: contact.jid, name: contact.name }, "Subscribed to presence");
       } catch (err) {
         logger.error({ err, jid: contact.jid }, "Failed to subscribe to presence");
       }
@@ -110,6 +112,37 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   ]);
 }
 
+/**
+ * Proactively resolve a phone number to its WhatsApp LID and cache it.
+ * Without this, we'd only learn the LID mapping passively when the contact
+ * sends a message — meaning the FIRST online event would be missed because
+ * presence updates arrive keyed by LID, not phone JID.
+ */
+async function resolveAndCacheLid(sock: WASocket, phoneJid: string): Promise<void> {
+  try {
+    const result = await withTimeout(sock.onWhatsApp(phoneJid), 8000);
+    const info = result?.[0];
+    if (!info?.exists) {
+      logger.warn({ phoneJid }, "Contact not found on WhatsApp");
+      return;
+    }
+
+    // Baileys returns `lid` as separate field in newer versions
+    const lid = (info as any).lid;
+    if (lid) {
+      const lidKey = String(lid).split(":")[0] + "@lid";
+      const phoneNum = phoneFromJid(phoneJid);
+      lidToPhone.set(lidKey, phoneNum);
+      phoneToLid.set(phoneNum, lidKey);
+      logger.info({ phone: phoneNum, lid: lidKey }, "Pre-resolved LID mapping");
+    } else {
+      logger.debug({ phoneJid }, "onWhatsApp returned no LID — will learn passively");
+    }
+  } catch (err) {
+    logger.warn({ err, phoneJid }, "Could not pre-resolve LID");
+  }
+}
+
 /** Subscribe to a single new contact (called when user adds a contact via API). */
 export async function subscribeToContact(sock: WASocket, contact: db.Contact) {
   contactStatus.set(contact.jid, {
@@ -120,12 +153,13 @@ export async function subscribeToContact(sock: WASocket, contact: db.Contact) {
   });
 
   try {
-    logger.info({ jid: contact.jid, name: contact.name }, "Calling presenceSubscribe...");
+    // Pre-resolve LID so the first online event matches immediately
+    await resolveAndCacheLid(sock, contact.jid);
+
     await withTimeout(sock.presenceSubscribe(contact.jid), 5000);
     logger.info({ jid: contact.jid, name: contact.name }, "Subscribed to new contact");
 
     // Schedule periodic re-subscribes every 5 minutes for THIS contact.
-    // WhatsApp presence subscriptions expire, so we need to refresh them.
     setInterval(() => {
       if (contactStatus.has(contact.jid)) {
         sock.presenceSubscribe(contact.jid).catch(() => {});
@@ -218,7 +252,7 @@ function findContactByJid(jid: string) {
 }
 
 /** Handle incoming presence update from Baileys. */
-function handlePresenceUpdate(update: { id: string; presences: Record<string, { lastKnownPresence: string }> }) {
+async function handlePresenceUpdate(update: { id: string; presences: Record<string, { lastKnownPresence: string }> }) {
   const jid = update.id;
   const state = findContactByJid(jid);
   if (!state) return; // untracked contact
@@ -243,37 +277,45 @@ function handlePresenceUpdate(update: { id: string; presences: Record<string, { 
       state.lastChange = new Date();
       logger.info({ name: state.name, jid }, "ONLINE");
 
-      // Record in database
+      // Fire-and-forget presence log (not on UI critical path)
       db.logPresence(state.contactId, "online").catch((err) =>
         logger.error(err, "Failed to log presence")
       );
-      db.openSession(state.contactId).catch((err) =>
-        logger.error(err, "Failed to open session")
-      );
 
-      // Notify real-time listeners
+      // AWAIT the session write BEFORE firing the WS event so the frontend's
+      // refetch always sees the new row.
+      try {
+        await db.openSession(state.contactId);
+      } catch (err) {
+        logger.error({ err }, "Failed to open session");
+      }
+
+      // Notify real-time listeners (dashboard + push notifications)
       listeners.forEach((cb) => cb(state.contactId, state.name, "online"));
     }
   } else if (presence === "unavailable") {
     // Contact went OFFLINE — use grace period to avoid flicker
     if (state.isOnline && !state.offlineTimer) {
-      state.offlineTimer = setTimeout(() => {
+      state.offlineTimer = setTimeout(async () => {
         state.isOnline = false;
         state.lastChange = new Date();
         state.offlineTimer = undefined;
         logger.info({ name: state.name, jid }, "OFFLINE");
 
+        // Fire-and-forget presence log
         db.logPresence(state.contactId, "offline").catch((err) =>
           logger.error(err, "Failed to log presence")
         );
-        // Close the session AND re-aggregate today's stats so the dashboard
-        // shows fresh totals within seconds (not just hourly cron).
-        db.closeSession(state.contactId)
-          .then(() => {
-            const today = new Date().toISOString().slice(0, 10);
-            return aggregateDay(today);
-          })
-          .catch((err) => logger.error(err, "Failed to close session / aggregate"));
+
+        // AWAIT closeSession + aggregateDay BEFORE firing the WS event so
+        // the frontend's refetch sees the final end_time + updated daily_stats.
+        try {
+          await db.closeSession(state.contactId);
+          const today = new Date().toISOString().slice(0, 10);
+          await aggregateDay(today);
+        } catch (err) {
+          logger.error({ err }, "Failed to close session / aggregate");
+        }
 
         listeners.forEach((cb) => cb(state.contactId, state.name, "offline"));
       }, config.tracking.offlineGracePeriodMs);

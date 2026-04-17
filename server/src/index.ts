@@ -11,7 +11,7 @@ import cron from "node-cron";
 
 import { config } from "./config";
 import { logger } from "./utils/logger";
-import { initDB } from "./db/connection";
+import { initDB, pool } from "./db/connection";
 import { connectWhatsApp, onConnectionChange, getSocket } from "./whatsapp/client";
 import { startTracking } from "./whatsapp/presence";
 import { onPresenceChange } from "./whatsapp/presence";
@@ -20,9 +20,27 @@ import { setupWebSocket } from "./api/websocket";
 import { aggregateDay } from "./services/analytics";
 import { notifyOnline } from "./services/notify";
 
+/**
+ * Close any sessions left open from a previous server run (crash, restart, etc).
+ * Without this, a contact who was online when the server died would show a
+ * ghost "Now (live)" session in the dashboard forever.
+ */
+async function closeOrphanSessions() {
+  const { rowCount } = await pool.query(
+    `UPDATE sessions
+     SET end_time = NOW(),
+         duration_s = EXTRACT(EPOCH FROM (NOW() - start_time))::INTEGER
+     WHERE end_time IS NULL`
+  );
+  if (rowCount && rowCount > 0) {
+    logger.warn(`Closed ${rowCount} orphan session(s) on startup`);
+  }
+}
+
 async function main() {
   // 1. Initialise database
   await initDB();
+  await closeOrphanSessions();
   logger.info("Database ready");
 
   // 2. Set up Fastify
@@ -41,15 +59,15 @@ async function main() {
   await connectWhatsApp();
 
   // Start tracking once connected — use getSocket() for the live socket.
-  // Wait a few seconds after "open" for Baileys to fully initialise.
+  // 2s settling delay for Baileys internal init.
   let hasStarted = false;
   onConnectionChange((update) => {
     if (update.connection === "open" && !hasStarted) {
       hasStarted = true;
       setTimeout(() => {
-        logger.info("Starting tracking after 5s settling delay");
+        logger.info("Starting tracking");
         startTracking(getSocket());
-      }, 5000);
+      }, 2000);
     }
   });
 

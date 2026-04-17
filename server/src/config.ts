@@ -15,9 +15,9 @@ export const config = {
   // Presence tracking settings
   tracking: {
     // Delay between subscribing to each contact (ms) to avoid rate limits
-    subscriptionStaggerMs: 2000,
+    subscriptionStaggerMs: 500,
     // Re-subscribe interval (Baileys presence subscriptions expire)
-    resubscribeIntervalMs: 10 * 60 * 1000, // 10 minutes
+    resubscribeIntervalMs: 5 * 60 * 1000, // 5 minutes (was 10)
     // How long to wait before marking an "unavailable" contact as offline
     offlineGracePeriodMs: 30 * 1000, // 30 seconds
   },
