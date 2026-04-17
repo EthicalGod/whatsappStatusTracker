@@ -10,6 +10,8 @@ import makeWASocket, {
   DisconnectReason,
   WASocket,
   ConnectionState,
+  Browsers,
+  fetchLatestBaileysVersion,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import { join } from "path";
@@ -41,12 +43,21 @@ export function getCurrentQR(): string | null {
 export async function connectWhatsApp(): Promise<WASocket> {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
+  // Fetch the latest WhatsApp Web protocol version so WhatsApp's servers
+  // don't reject us with 405 (outdated client)
+  const { version } = await fetchLatestBaileysVersion();
+  logger.info({ version }, "Using WhatsApp Web version");
+
   const sock = makeWASocket({
+    version,
     auth: state,
-    printQRInTerminal: false, // we handle QR display ourselves
+    // Browsers.macOS registers as a valid client — needed to avoid 405
+    browser: Browsers.macOS("GST Tracker"),
     logger: logger.child({ module: "baileys" }) as any,
-    // Don't sync full chat history — we only need presence
     syncFullHistory: false,
+    // Match real browser behaviour — some WhatsApp checks need these
+    markOnlineOnConnect: false,
+    generateHighQualityLinkPreview: false,
   });
 
   sock.ev.on("creds.update", saveCreds);
