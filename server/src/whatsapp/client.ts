@@ -94,11 +94,15 @@ export async function connectWhatsApp(): Promise<WASocket> {
     // Ignore status broadcasts and group messages entirely.
     // We ONLY need 1-on-1 presence updates. Group/status messages trigger
     // decryption errors that stall Baileys' message queue and block presence.
-    shouldIgnoreJid: (jid: string) =>
-      jid.includes("@broadcast") ||
-      jid.includes("status@") ||
-      jid.includes("@g.us") ||
-      jid.includes("@newsletter"),
+    shouldIgnoreJid: (jid?: string | null) => {
+      if (!jid || typeof jid !== "string") return false;
+      return (
+        jid.includes("@broadcast") ||
+        jid.startsWith("status@") ||
+        jid.includes("@g.us") ||
+        jid.includes("@newsletter")
+      );
+    },
     // Stub message retrieval — we never need historical messages for presence
     getMessage: async () => undefined,
   });
