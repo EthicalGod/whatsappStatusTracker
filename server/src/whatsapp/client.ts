@@ -53,12 +53,20 @@ export async function logoutWhatsApp(): Promise<void> {
     logger.warn({ err }, "Baileys logout() failed — forcing auth clear");
   }
 
-  // Wipe the auth directory so next startup starts fresh with a QR
+  // Wipe the *contents* of the auth directory so next startup starts fresh
+  // with a QR. We cannot rm the directory itself — in Docker it's a bind
+  // mount and removing the mount point fails with EBUSY on Windows and
+  // silently recreates on Linux.
   const fs = await import("fs/promises");
+  const { join } = await import("path");
   try {
-    await fs.rm(AUTH_DIR, { recursive: true, force: true });
-    await fs.mkdir(AUTH_DIR, { recursive: true });
-    logger.info("Auth state cleared");
+    const entries = await fs.readdir(AUTH_DIR);
+    await Promise.all(
+      entries.map((name) =>
+        fs.rm(join(AUTH_DIR, name), { recursive: true, force: true })
+      )
+    );
+    logger.info({ cleared: entries.length }, "Auth state cleared");
   } catch (err) {
     logger.error({ err }, "Could not clear auth_info directory");
   }
