@@ -1,0 +1,18 @@
+# Environment files (contains secrets)
+.env
+.env.local
+.env.production
+
+# Node modules
+node_modules/
+
+# Build outputs
+dist/
+.next/
+
+# WhatsApp session (per-deployment)
+server/auth_info/
+
+# OS files
+.DS_Store
+Thumbs.db
