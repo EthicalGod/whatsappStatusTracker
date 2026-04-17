@@ -67,13 +67,16 @@ export async function registerRoutes(app: FastifyInstance) {
 
     const contact = await db.addContact(phone.replace(/\D/g, ""), name);
 
-    // Start tracking immediately
-    try {
-      const sock = getSocket();
-      await subscribeToContact(sock, contact);
-    } catch {
-      // WhatsApp not connected yet — will subscribe on next reconnect
-    }
+    // Fire-and-forget the WhatsApp subscription — don't block the HTTP response
+    // on a potentially slow Baileys call (e.g. during history sync).
+    setImmediate(async () => {
+      try {
+        const sock = getSocket();
+        await subscribeToContact(sock, contact);
+      } catch {
+        // will retry on next reconnect cycle
+      }
+    });
 
     return reply.status(201).send(contact);
   });

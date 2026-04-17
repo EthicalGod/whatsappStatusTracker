@@ -13,7 +13,7 @@ import cron from "node-cron";
 import { config } from "./config";
 import { logger } from "./utils/logger";
 import { initDB } from "./db/connection";
-import { connectWhatsApp, onConnectionChange } from "./whatsapp/client";
+import { connectWhatsApp, onConnectionChange, getSocket } from "./whatsapp/client";
 import { startTracking } from "./whatsapp/presence";
 import { onPresenceChange } from "./whatsapp/presence";
 import { registerRoutes } from "./api/routes";
@@ -35,12 +35,15 @@ async function main() {
   setupWebSocket(httpServer);
 
   // 3. Connect to WhatsApp
-  const sock = await connectWhatsApp();
+  await connectWhatsApp();
 
-  // Start tracking once connected
+  // Start tracking once connected — use getSocket() so we always get the
+  // current live socket (not a stale reference after a reconnect).
+  let hasStarted = false;
   onConnectionChange((update) => {
-    if (update.connection === "open") {
-      startTracking(sock);
+    if (update.connection === "open" && !hasStarted) {
+      hasStarted = true;
+      startTracking(getSocket());
     }
   });
 

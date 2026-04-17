@@ -66,7 +66,7 @@ export async function startTracking(sock: WASocket) {
 
     setTimeout(async () => {
       try {
-        await sock.presenceSubscribe(contact.jid);
+        await withTimeout(sock.presenceSubscribe(contact.jid), 5000);
         logger.debug({ jid: contact.jid, name: contact.name }, "Subscribed to presence");
       } catch (err) {
         logger.error({ err, jid: contact.jid }, "Failed to subscribe to presence");
@@ -76,6 +76,16 @@ export async function startTracking(sock: WASocket) {
 
   // Re-subscribe periodically (presence subscriptions expire)
   setInterval(() => resubscribeAll(sock), config.tracking.resubscribeIntervalMs);
+}
+
+/** Wrap a promise with a timeout so a stuck Baileys call can't hang us. */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`timeout after ${ms}ms`)), ms)
+    ),
+  ]);
 }
 
 /** Subscribe to a single new contact (called when user adds a contact via API). */
@@ -88,7 +98,7 @@ export async function subscribeToContact(sock: WASocket, contact: db.Contact) {
   });
 
   try {
-    await sock.presenceSubscribe(contact.jid);
+    await withTimeout(sock.presenceSubscribe(contact.jid), 5000);
     logger.info({ jid: contact.jid, name: contact.name }, "Subscribed to new contact");
   } catch (err) {
     logger.error({ err, jid: contact.jid }, "Failed to subscribe to new contact");
