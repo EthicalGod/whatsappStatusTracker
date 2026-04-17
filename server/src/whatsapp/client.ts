@@ -22,6 +22,7 @@ export type ConnectionCallback = (state: Partial<ConnectionState>) => void;
 
 let socket: WASocket | null = null;
 let connectionListeners: ConnectionCallback[] = [];
+let currentQR: string | null = null;
 
 export function onConnectionChange(cb: ConnectionCallback) {
   connectionListeners.push(cb);
@@ -30,6 +31,11 @@ export function onConnectionChange(cb: ConnectionCallback) {
 export function getSocket(): WASocket {
   if (!socket) throw new Error("WhatsApp client not initialised");
   return socket;
+}
+
+/** Returns the latest QR string if awaiting scan, or null if already authenticated. */
+export function getCurrentQR(): string | null {
+  return currentQR;
 }
 
 export async function connectWhatsApp(): Promise<WASocket> {
@@ -48,10 +54,16 @@ export async function connectWhatsApp(): Promise<WASocket> {
   sock.ev.on("connection.update", (update) => {
     const { connection, lastDisconnect, qr } = update;
 
-    // Show QR code in terminal for first-time auth
+    // Show QR code (terminal + expose via HTTP endpoint)
     if (qr) {
+      currentQR = qr;
       logger.info("Scan this QR code with WhatsApp on your phone:");
+      logger.info("  Or open: http://YOUR_SERVER_IP:3000/api/qr");
       qrcode.generate(qr, { small: true });
+    }
+
+    if (connection === "open") {
+      currentQR = null;
     }
 
     if (connection === "close") {

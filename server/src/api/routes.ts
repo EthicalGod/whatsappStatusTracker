@@ -3,13 +3,48 @@
  */
 
 import { FastifyInstance } from "fastify";
+import QRCode from "qrcode";
 import * as db from "../db/queries";
-import { getSocket } from "../whatsapp/client";
+import { getSocket, getCurrentQR } from "../whatsapp/client";
 import { subscribeToContact, unsubscribeFromContact, getCurrentStatuses } from "../whatsapp/presence";
 import { getAnalytics } from "../services/analytics";
 import { saveSubscription } from "../services/notify";
 
 export async function registerRoutes(app: FastifyInstance) {
+
+  // ── QR Code for WhatsApp auth ────────────────────────────────────
+
+  app.get("/api/qr", async (_req, reply) => {
+    const qr = getCurrentQR();
+    if (!qr) {
+      return reply.type("text/html").send(`
+        <html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#f0f2f5">
+          <h2 style="color:#075E54">WhatsApp already connected</h2>
+          <p style="color:#667781">No QR code needed. <a href="/">Go to dashboard</a></p>
+        </body></html>
+      `);
+    }
+
+    const dataUrl = await QRCode.toDataURL(qr, { width: 400, margin: 2 });
+    return reply.type("text/html").send(`
+      <html>
+        <head>
+          <title>Scan QR — GST Tracker</title>
+          <meta http-equiv="refresh" content="20">
+        </head>
+        <body style="font-family:sans-serif;text-align:center;padding:40px;background:#f0f2f5">
+          <h2 style="color:#075E54">Scan with WhatsApp</h2>
+          <p style="color:#667781;margin:0 0 20px">
+            Open WhatsApp → Settings → Linked Devices → Link a Device
+          </p>
+          <img src="${dataUrl}" alt="QR Code" style="background:white;padding:12px;border-radius:8px" />
+          <p style="color:#667781;font-size:12px;margin-top:20px">
+            Page auto-refreshes every 20 seconds
+          </p>
+        </body>
+      </html>
+    `);
+  });
 
   // ── Contacts ─────────────────────────────────────────────────────
 
