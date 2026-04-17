@@ -17,7 +17,7 @@ import { config } from "../config";
 import { logger } from "../utils/logger";
 import * as db from "../db/queries";
 import { aggregateDay } from "../services/analytics";
-import { isWithinSchedule } from "../services/schedules";
+import { isWithinSchedule, hasSchedules } from "../services/schedules";
 import { getSocket } from "./client";
 
 // In-memory state: tracks current online status per JID
@@ -186,6 +186,39 @@ async function retryLidResolution() {
  * Fix: (1) wait for creds.update to populate a name, then send ourselves,
  * and (2) re-send every 60 seconds to keep the server's idle timer reset.
  */
+/**
+ * Decide whether the tracker account should be marked "available" to
+ * WhatsApp right now. Rules:
+ *  - Any tracked contact with NO schedules forces 24/7 availability
+ *    (otherwise we'd silently stop tracking them).
+ *  - Otherwise, be available iff at least one scheduled contact's window
+ *    includes the current time (union semantics).
+ *  - If no contacts are tracked at all, we still broadcast available so
+ *    the account stays linked and ready for new additions.
+ */
+function shouldSelfBeAvailable(): boolean {
+  if (contactStatus.size === 0) return true;
+  for (const [, state] of contactStatus) {
+    if (!hasSchedules(state.contactId)) return true;
+    if (isWithinSchedule(state.contactId)) return true;
+  }
+  return false;
+}
+
+// Memoised so we can detect idle→active transitions and fire a fresh
+// round of `presenceSubscribe()` (WhatsApp drops subs when we go offline).
+let lastSelfAvailable: boolean | null = null;
+
+/**
+ * Reset the memo so the next `keepSelfAvailable` tick re-evaluates from
+ * scratch. Call this whenever the schedule cache changes (e.g. the user
+ * saves a new schedule) so the transition re-fires subscriptions even
+ * inside a 60-second poll window.
+ */
+export function forceAvailabilityReevaluation() {
+  lastSelfAvailable = null;
+}
+
 function keepSelfAvailable() {
   const trySend = async () => {
     let sock: WASocket;
@@ -194,16 +227,26 @@ function keepSelfAvailable() {
     } catch {
       return; // socket not initialised (or just logged out)
     }
+
+    const wantAvailable = shouldSelfBeAvailable();
+    const prev = lastSelfAvailable;
+    lastSelfAvailable = wantAvailable;
+
     try {
-      if (sock.authState.creds.me && !sock.authState.creds.me.name) {
+      if (wantAvailable && sock.authState.creds.me && !sock.authState.creds.me.name) {
         // Placeholder so Baileys' "no name present" guard clears on fresh pair.
         sock.authState.creds.me.name = "GST Tracker";
       }
-      await sock.sendPresenceUpdate("available");
-      logger.debug("Sent self presence=available");
+      await sock.sendPresenceUpdate(wantAvailable ? "available" : "unavailable");
+      logger.debug({ wantAvailable }, "Self presence update sent");
+
+      // Idle → active transition: re-subscribe to every tracked contact so
+      // WhatsApp restarts pushing us their presence.
+      if (wantAvailable && prev === false) {
+        logger.info("Re-entering tracking window — re-subscribing all contacts");
+        resubscribeAll().catch(() => {});
+      }
     } catch (err: any) {
-      // Expected when the socket is transitioning (reconnect). Only log at warn
-      // if it's NOT the benign "Connection Closed" we'd see on every cycle.
       const code = err?.output?.statusCode;
       if (code !== 428) {
         logger.warn({ err }, "Failed to send self presence update");

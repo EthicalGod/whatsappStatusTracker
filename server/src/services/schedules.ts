@@ -52,3 +52,9 @@ export function isWithinSchedule(contactId: string, at: Date = new Date()): bool
 export function scheduledContactIds(): string[] {
   return Array.from(cache.keys());
 }
+
+/** True if this contact has any schedules defined (i.e. is NOT tracked 24/7). */
+export function hasSchedules(contactId: string): boolean {
+  const slots = cache.get(contactId);
+  return !!(slots && slots.length > 0);
+}

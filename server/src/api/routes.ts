@@ -6,7 +6,7 @@ import { FastifyInstance } from "fastify";
 import QRCode from "qrcode";
 import * as db from "../db/queries";
 import { getSocket, getCurrentQR, logoutWhatsApp, isWhatsAppConnected } from "../whatsapp/client";
-import { subscribeToContact, unsubscribeFromContact, getCurrentStatuses } from "../whatsapp/presence";
+import { subscribeToContact, unsubscribeFromContact, getCurrentStatuses, forceAvailabilityReevaluation } from "../whatsapp/presence";
 import { getAnalytics } from "../services/analytics";
 import { refreshScheduleCache } from "../services/schedules";
 import { saveSubscription } from "../services/notify";
@@ -186,6 +186,9 @@ export async function registerRoutes(app: FastifyInstance) {
     }
     const saved = await db.setSchedules(req.params.id, slots);
     await refreshScheduleCache();
+    // Let the next tick re-evaluate self-availability so slots take effect
+    // immediately instead of on the next idle→active comparison.
+    forceAvailabilityReevaluation();
     return saved;
   });
 
