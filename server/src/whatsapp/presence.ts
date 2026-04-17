@@ -278,26 +278,29 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
  */
 async function resolveAndCacheLid(sock: WASocket, phoneJid: string): Promise<void> {
   try {
-    const result = await withTimeout(sock.onWhatsApp(phoneJid), 8000);
-    const info = result?.[0];
-    if (!info?.exists) {
-      logger.warn({ phoneJid }, "Contact not found on WhatsApp");
+    // Authoritative Baileys API: checks its own signalRepository mapping cache
+    // first, then falls back to a USync fetch against WhatsApp's server.
+    // Returns the actual LID or null. Avoids heuristic guessing entirely.
+    const repo: any = (sock as any).signalRepository;
+    if (!repo?.lidMapping?.getLIDForPN) {
+      logger.warn("signalRepository.lidMapping not available on this Baileys version");
       return;
     }
-
-    // Baileys returns `lid` as separate field in newer versions
-    const lid = (info as any).lid;
-    if (lid) {
-      const lidKey = normaliseLid(String(lid));
-      const phoneNum = phoneFromJid(phoneJid);
-      lidToPhone.set(lidKey, phoneNum);
-      phoneToLid.set(phoneNum, lidKey);
-      logger.info({ phone: phoneNum, lid: lidKey }, "Pre-resolved LID mapping");
-    } else {
-      logger.debug({ phoneJid }, "onWhatsApp returned no LID — will learn via heuristic or chat events");
+    const lid: string | null = await withTimeout(
+      repo.lidMapping.getLIDForPN(phoneJid),
+      10_000
+    );
+    if (!lid) {
+      logger.debug({ phoneJid }, "getLIDForPN returned null — will retry");
+      return;
     }
+    const lidKey = normaliseLid(lid);
+    const phoneNum = phoneFromJid(phoneJid);
+    lidToPhone.set(lidKey, phoneNum);
+    phoneToLid.set(phoneNum, lidKey);
+    logger.info({ phone: phoneNum, lid: lidKey }, "Resolved LID via signalRepository");
   } catch (err) {
-    logger.warn({ err, phoneJid }, "Could not pre-resolve LID");
+    logger.warn({ err, phoneJid }, "Could not resolve LID");
   }
 }
 
