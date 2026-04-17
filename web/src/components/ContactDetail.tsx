@@ -13,9 +13,10 @@ interface Props {
   contactId: string;
   contact: Contact | null;
   onRemove: () => void;
+  onBack?: () => void;
 }
 
-export function ContactDetail({ contactId, contact, onRemove }: Props) {
+export function ContactDetail({ contactId, contact, onRemove, onBack }: Props) {
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [tab, setTab] = useState<"overview" | "sessions">("overview");
   const [removing, setRemoving] = useState(false);
@@ -133,7 +134,18 @@ export function ContactDetail({ contactId, contact, onRemove }: Props) {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Header */}
-      <div className="bg-[#075E54] text-white px-6 py-4 flex items-center gap-4">
+      <div className="bg-[#075E54] text-white px-3 sm:px-6 py-3 sm:py-4 flex items-center gap-3 sm:gap-4">
+        {onBack && (
+          <button
+            onClick={onBack}
+            aria-label="Back"
+            className="md:hidden -ml-1 p-1.5 rounded-full hover:bg-white/10"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+        )}
         <div
           className="w-10 h-10 rounded-full flex items-center justify-center text-lg font-medium flex-shrink-0"
           style={{ backgroundColor: isOnline ? "#25D366" : "#a0aeb6" }}
@@ -142,10 +154,10 @@ export function ContactDetail({ contactId, contact, onRemove }: Props) {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <h2 className="text-lg font-medium truncate">{contact.name}</h2>
+            <h2 className="text-base sm:text-lg font-medium truncate">{contact.name}</h2>
             <StatusDot online={isOnline} />
           </div>
-          <p className="text-xs text-white/70">
+          <p className="text-xs text-white/70 truncate">
             {isOnline
               ? "Online now"
               : contact.lastChange
@@ -156,7 +168,7 @@ export function ContactDetail({ contactId, contact, onRemove }: Props) {
         <button
           onClick={handleRemove}
           disabled={removing}
-          className="text-xs text-white/60 hover:text-white px-3 py-1 rounded border border-white/20 hover:border-white/40"
+          className="text-xs text-white/60 hover:text-white px-2 sm:px-3 py-1 rounded border border-white/20 hover:border-white/40 whitespace-nowrap"
         >
           {removing ? "..." : "Remove"}
         </button>
