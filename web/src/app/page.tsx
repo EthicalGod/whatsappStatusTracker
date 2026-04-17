@@ -96,6 +96,21 @@ export default function Dashboard() {
           </span>
         </div>
 
+        {/* Download CSV of all sessions */}
+        <a
+          href="/api/export/sessions.csv"
+          download
+          title="Download all session history as CSV"
+          aria-label="Download CSV"
+          className="flex items-center gap-1.5 text-xs px-2 sm:px-3 py-1.5 rounded-full border border-white/20 hover:border-white/40 hover:bg-white/10 transition-colors"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-5l-4 4m0 0l-4-4m4 4V4" />
+          </svg>
+          <span className="hidden sm:inline">CSV</span>
+        </a>
+
         {/* Sign in button — opens QR modal */}
         <button
           onClick={() => setShowSignIn(true)}

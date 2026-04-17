@@ -226,9 +226,23 @@ export function ContactDetail({ contactId, contact, onRemove, onBack }: Props) {
 
         {tab === "sessions" && (
           <div className="bg-white rounded-lg p-4 border border-[#E9EDEF]">
-            <h3 className="text-sm font-medium text-[#111B21] mb-3">
-              Recent Sessions
-            </h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium text-[#111B21]">
+                Recent Sessions
+              </h3>
+              <a
+                href={`/api/export/sessions.csv?contactId=${contactId}`}
+                download
+                className="text-xs font-medium text-[#075E54] hover:text-[#128C7E] flex items-center gap-1"
+                title="Download this contact's sessions as CSV"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-5l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Export CSV
+              </a>
+            </div>
             <SessionTimeline sessions={liveAnalytics?.recentSessions || []} />
           </div>
         )}

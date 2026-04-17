@@ -5,6 +5,7 @@
 import { FastifyInstance } from "fastify";
 import QRCode from "qrcode";
 import * as db from "../db/queries";
+import { pool } from "../db/connection";
 import { getSocket, getCurrentQR, logoutWhatsApp, isWhatsAppConnected } from "../whatsapp/client";
 import { subscribeToContact, unsubscribeFromContact, getCurrentStatuses, forceAvailabilityReevaluation } from "../whatsapp/presence";
 import { getAnalytics } from "../services/analytics";
@@ -211,6 +212,73 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get<{ Querystring: { date?: string } }>("/api/analytics/summary", async (req) => {
     const date = req.query.date || new Date().toISOString().slice(0, 10);
     return db.getAllDailyStats(date);
+  });
+
+  // ── CSV export ───────────────────────────────────────────────────
+  //
+  // Columns (matches the legacy whatsapp_activity.csv format):
+  //   label, start_time, end_time, duration_seconds
+  //
+  // Times are rendered in the server's local timezone as YYYY-MM-DD HH:MM:SS.
+  // Only closed sessions are exported (end_time IS NOT NULL) so the duration
+  // column is always populated.
+  app.get<{
+    Querystring: { from?: string; to?: string; contactId?: string };
+  }>("/api/export/sessions.csv", async (req, reply) => {
+    const { from, to, contactId } = req.query;
+    const conditions: string[] = ["s.end_time IS NOT NULL"];
+    const params: any[] = [];
+    if (contactId) {
+      params.push(contactId);
+      conditions.push(`s.contact_id = $${params.length}`);
+    }
+    if (from) {
+      params.push(from);
+      conditions.push(`s.start_time >= $${params.length}`);
+    }
+    if (to) {
+      params.push(to);
+      conditions.push(`s.start_time <= $${params.length}`);
+    }
+
+    const { rows } = await pool.query(
+      `SELECT c.name AS label, s.start_time, s.end_time, s.duration_s
+         FROM sessions s
+         JOIN contacts c ON c.id = s.contact_id
+        WHERE ${conditions.join(" AND ")}
+        ORDER BY s.start_time ASC`,
+      params
+    );
+
+    const fmt = (d: Date) => {
+      const pad = (n: number) => n.toString().padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    };
+
+    const escape = (v: string) =>
+      /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+
+    const lines = ["label,start_time,end_time,duration_seconds"];
+    for (const r of rows) {
+      lines.push(
+        [
+          escape(r.label),
+          fmt(new Date(r.start_time)),
+          fmt(new Date(r.end_time)),
+          r.duration_s,
+        ].join(",")
+      );
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const filename = contactId
+      ? `whatsapp_activity_${today}_${contactId.slice(0, 8)}.csv`
+      : `whatsapp_activity_${today}.csv`;
+
+    return reply
+      .type("text/csv; charset=utf-8")
+      .header("Content-Disposition", `attachment; filename="${filename}"`)
+      .send(lines.join("\n") + "\n");
   });
 
   // ── Status (real-time snapshot) ──────────────────────────────────
