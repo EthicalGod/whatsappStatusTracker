@@ -7,7 +7,6 @@
 
 import Fastify from "fastify";
 import cors from "@fastify/cors";
-import { createServer } from "http";
 import cron from "node-cron";
 
 import { config } from "./config";
@@ -26,19 +25,22 @@ async function main() {
   await initDB();
   logger.info("Database ready");
 
-  // 2. Set up Fastify + HTTP server
+  // 2. Set up Fastify
   const app = Fastify({ logger: false });
   await app.register(cors, { origin: config.frontendUrl });
   await registerRoutes(app);
 
-  const httpServer = createServer(app.server);
-  setupWebSocket(httpServer);
+  // 3. Start listening FIRST (binds Fastify to the port)
+  await app.listen({ port: config.port, host: "0.0.0.0" });
+  logger.info(`Server running on http://0.0.0.0:${config.port}`);
 
-  // 3. Connect to WhatsApp
+  // 4. Attach Socket.io to the now-listening server
+  setupWebSocket(app.server);
+
+  // 5. Connect to WhatsApp
   await connectWhatsApp();
 
-  // Start tracking once connected — use getSocket() so we always get the
-  // current live socket (not a stale reference after a reconnect).
+  // Start tracking once connected — use getSocket() for the live socket.
   let hasStarted = false;
   onConnectionChange((update) => {
     if (update.connection === "open" && !hasStarted) {
@@ -47,7 +49,7 @@ async function main() {
     }
   });
 
-  // 4. Send push notifications when contacts come online
+  // 6. Push notifications when contacts come online
   onPresenceChange((contactId, name, status) => {
     if (status === "online") {
       notifyOnline(name).catch((err) =>
@@ -56,25 +58,18 @@ async function main() {
     }
   });
 
-  // 5. Aggregate daily stats at midnight
+  // 7. Daily stats aggregation
   cron.schedule("5 0 * * *", () => {
     const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
     aggregateDay(yesterday).catch((err) =>
       logger.error(err, "Daily aggregation failed")
     );
   });
-
-  // Also aggregate current day every hour for live stats
   cron.schedule("0 * * * *", () => {
     const today = new Date().toISOString().slice(0, 10);
     aggregateDay(today).catch((err) =>
       logger.error(err, "Hourly aggregation failed")
     );
-  });
-
-  // 6. Start listening
-  httpServer.listen(config.port, () => {
-    logger.info(`Server running on http://localhost:${config.port}`);
   });
 }
 
