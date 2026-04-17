@@ -17,6 +17,7 @@ import { config } from "../config";
 import { logger } from "../utils/logger";
 import * as db from "../db/queries";
 import { aggregateDay } from "../services/analytics";
+import { getSocket } from "./client";
 
 // In-memory state: tracks current online status per JID
 const contactStatus = new Map<string, {
@@ -54,22 +55,28 @@ export function getCurrentStatuses() {
   return result;
 }
 
-/** Subscribe to presence for all active contacts. */
+// Tracks which sockets already have our listeners attached, so callers can
+// invoke startTracking on every reconnect without double-binding.
+const boundSockets = new WeakSet<WASocket>();
+let timersInstalled = false;
+
+/**
+ * Attach presence tracking to a socket. Safe to call on every reconnect —
+ * event listeners are re-bound to the fresh socket, while state (contactStatus,
+ * LID maps) and global timers are kept intact.
+ */
 export async function startTracking(sock: WASocket) {
+  if (boundSockets.has(sock)) return; // idempotent for the same socket
+  boundSockets.add(sock);
+
   const contacts = await db.getActiveContacts();
   logger.info({ count: contacts.length, jids: contacts.map(c => c.jid) }, "Starting presence tracking");
 
-  // Keep our own account broadcast as "available" so WhatsApp's server pushes
-  // us presence updates for subscribed contacts. Without this, the server treats
-  // us as a background/offline client and silently drops presence pushes — the
-  // root cause of "no presence events unless contact sends a message".
-  keepSelfAvailable(sock);
-
-  // Register presence event handler
+  // Register presence event handler — fresh per socket, because sock.ev is
+  // a new EventEmitter each connect.
   sock.ev.on("presence.update", handlePresenceUpdate);
 
   // Silently build LID ↔ phone mapping from chat/message events.
-  // WhatsApp sends presence updates with LIDs but we subscribe with phone JIDs.
   sock.ev.on("chats.update" as any, (updates: any[]) => {
     for (const chat of updates) extractJidMapping(chat);
   });
@@ -82,19 +89,21 @@ export async function startTracking(sock: WASocket) {
     }
   });
 
-  // Stagger subscriptions to avoid rate limits
+  // Stagger subscriptions to avoid rate limits. On reconnect, contactStatus
+  // already has entries — we just re-subscribe on the new socket.
   for (let i = 0; i < contacts.length; i++) {
     const contact = contacts[i];
-    contactStatus.set(contact.jid, {
-      contactId: contact.id,
-      name: contact.name,
-      isOnline: false,
-      lastChange: new Date(),
-    });
+    if (!contactStatus.has(contact.jid)) {
+      contactStatus.set(contact.jid, {
+        contactId: contact.id,
+        name: contact.name,
+        isOnline: false,
+        lastChange: new Date(),
+      });
+    }
 
     setTimeout(async () => {
       try {
-        // Pre-resolve LID so the first presence event can match immediately
         await resolveAndCacheLid(sock, contact.jid);
         await withTimeout(sock.presenceSubscribe(contact.jid), 5000);
         logger.info({ jid: contact.jid, name: contact.name }, "Subscribed to presence");
@@ -104,22 +113,28 @@ export async function startTracking(sock: WASocket) {
     }, i * config.tracking.subscriptionStaggerMs);
   }
 
-  // Retry LID pre-resolve 20s after startup for any contacts still missing.
-  // Right after QR pairing, `onWhatsApp()` often times out because Baileys'
-  // internal sync isn't done yet. Once the connection stabilises, the call
-  // succeeds and we can populate the LID map proactively.
-  setTimeout(() => retryLidResolution(sock), 20_000);
-  setTimeout(() => retryLidResolution(sock), 60_000);
-
-  // Re-subscribe periodically (presence subscriptions expire)
-  setInterval(() => resubscribeAll(sock), config.tracking.resubscribeIntervalMs);
+  // Install global timers only once — they use getSocket() internally so they
+  // always operate on the current live socket, even across reconnects.
+  if (!timersInstalled) {
+    timersInstalled = true;
+    keepSelfAvailable();
+    setTimeout(() => retryLidResolution(), 20_000);
+    setTimeout(() => retryLidResolution(), 60_000);
+    setInterval(() => resubscribeAll(), config.tracking.resubscribeIntervalMs);
+  }
 }
 
 /**
  * Retry `onWhatsApp()` for any tracked contact whose LID we haven't learned yet.
  * Called periodically after connection stabilises.
  */
-async function retryLidResolution(sock: WASocket) {
+async function retryLidResolution() {
+  let sock: WASocket;
+  try {
+    sock = getSocket();
+  } catch {
+    return; // not connected yet
+  }
   for (const [storedJid] of contactStatus) {
     const phone = phoneFromJid(storedJid);
     if (phoneToLid.has(phone)) continue; // already mapped
@@ -140,34 +155,32 @@ async function retryLidResolution(sock: WASocket) {
  * Fix: (1) wait for creds.update to populate a name, then send ourselves,
  * and (2) re-send every 60 seconds to keep the server's idle timer reset.
  */
-function keepSelfAvailable(sock: WASocket) {
+function keepSelfAvailable() {
   const trySend = async () => {
+    let sock: WASocket;
     try {
-      const me = sock.authState.creds.me;
-      if (!me?.name) {
-        // Set a placeholder name so Baileys' "no name present" guard clears.
-        // WhatsApp doesn't actually display this to contacts, but Baileys
-        // requires *some* name to emit a presenceUpdate.
-        if (sock.authState.creds.me) {
-          sock.authState.creds.me.name = "GST Tracker";
-        }
+      sock = getSocket();
+    } catch {
+      return; // socket not initialised (or just logged out)
+    }
+    try {
+      if (sock.authState.creds.me && !sock.authState.creds.me.name) {
+        // Placeholder so Baileys' "no name present" guard clears on fresh pair.
+        sock.authState.creds.me.name = "GST Tracker";
       }
       await sock.sendPresenceUpdate("available");
       logger.debug("Sent self presence=available");
-    } catch (err) {
-      logger.warn({ err }, "Failed to send self presence update");
+    } catch (err: any) {
+      // Expected when the socket is transitioning (reconnect). Only log at warn
+      // if it's NOT the benign "Connection Closed" we'd see on every cycle.
+      const code = err?.output?.statusCode;
+      if (code !== 428) {
+        logger.warn({ err }, "Failed to send self presence update");
+      }
     }
   };
 
-  // First attempt after a short delay (let the initial sync settle)
   setTimeout(trySend, 3000);
-
-  // When creds sync and push us a name, re-send immediately
-  sock.ev.on("creds.update", () => {
-    trySend();
-  });
-
-  // Re-send every 60 seconds to keep the server's "I am online" flag fresh
   setInterval(trySend, 60_000);
 }
 
@@ -248,7 +261,13 @@ export function unsubscribeFromContact(jid: string) {
 }
 
 /** Re-subscribe to all tracked contacts (presence subs expire). */
-async function resubscribeAll(sock: WASocket) {
+async function resubscribeAll() {
+  let sock: WASocket;
+  try {
+    sock = getSocket();
+  } catch {
+    return;
+  }
   const jids = Array.from(contactStatus.keys());
   logger.debug({ count: jids.length }, "Re-subscribing to presence for all contacts");
 
@@ -259,7 +278,7 @@ async function resubscribeAll(sock: WASocket) {
       } catch {
         // ignore — will retry next cycle
       }
-    }, i * 500); // faster stagger for re-subs (already established)
+    }, i * 500);
   }
 }
 

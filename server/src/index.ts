@@ -64,15 +64,18 @@ async function main() {
   // 5. Connect to WhatsApp
   await connectWhatsApp();
 
-  // Start tracking once connected — use getSocket() for the live socket.
-  // 2s settling delay for Baileys internal init.
-  let hasStarted = false;
+  // (Re)start tracking on every connection open. startTracking is idempotent
+  // per socket — listeners are bound exactly once to each fresh socket, and
+  // global timers are installed exactly once across the process lifetime.
+  // This is what keeps presence working after Baileys' post-QR stream:error
+  // 515 reconnect (where a brand-new WASocket replaces the original).
   onConnectionChange((update) => {
-    if (update.connection === "open" && !hasStarted) {
-      hasStarted = true;
+    if (update.connection === "open") {
       setTimeout(() => {
         logger.info("Starting tracking");
-        startTracking(getSocket());
+        startTracking(getSocket()).catch((err) =>
+          logger.error({ err }, "startTracking failed")
+        );
       }, 2000);
     }
   });
