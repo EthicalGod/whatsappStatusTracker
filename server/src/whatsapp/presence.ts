@@ -36,6 +36,14 @@ const contactStatus = new Map<string, {
 const lidToPhone = new Map<string, string>(); // lid → phone
 const phoneToLid = new Map<string, string>(); // phone → lid
 
+// Per-phone timestamp of the last presenceSubscribe() call. Used to gate the
+// heuristic LID binding: only @lid presence events that arrive within a short
+// window of a subscribe call are likely responses to OUR subscription;
+// anything else is spurious traffic from the auth history's other contacts
+// and must not be used to bind.
+const lastSubscribeAt = new Map<string, number>();
+const HEURISTIC_BIND_WINDOW_MS = 10_000;
+
 // Callback for real-time updates (Socket.io will register here)
 type PresenceCallback = (contactId: string, name: string, status: "online" | "offline") => void;
 const listeners: PresenceCallback[] = [];
@@ -107,6 +115,7 @@ export async function startTracking(sock: WASocket) {
       try {
         await resolveAndCacheLid(sock, contact.jid);
         await withTimeout(sock.presenceSubscribe(contact.jid), 5000);
+        lastSubscribeAt.set(phoneFromJid(contact.jid), Date.now());
         logger.info({ jid: contact.jid, name: contact.name }, "Subscribed to presence");
       } catch (err) {
         logger.error({ err, jid: contact.jid }, "Failed to subscribe to presence");
@@ -313,12 +322,14 @@ export async function subscribeToContact(sock: WASocket, contact: db.Contact) {
     await resolveAndCacheLid(sock, contact.jid);
 
     await withTimeout(sock.presenceSubscribe(contact.jid), 5000);
+    lastSubscribeAt.set(phoneFromJid(contact.jid), Date.now());
     logger.info({ jid: contact.jid, name: contact.name }, "Subscribed to new contact");
 
     // Schedule periodic re-subscribes every 5 minutes for THIS contact.
     setInterval(() => {
       if (contactStatus.has(contact.jid)) {
         sock.presenceSubscribe(contact.jid).catch(() => {});
+        lastSubscribeAt.set(phoneFromJid(contact.jid), Date.now());
       }
     }, 5 * 60 * 1000);
   } catch (err) {
@@ -349,6 +360,7 @@ async function resubscribeAll() {
     setTimeout(async () => {
       try {
         await sock.presenceSubscribe(jids[i]);
+        lastSubscribeAt.set(phoneFromJid(jids[i]), Date.now());
       } catch {
         // ignore — will retry next cycle
       }
@@ -418,23 +430,32 @@ function findContactByJid(jid: string) {
       }
     }
 
-    // Heuristic fallback: if only ONE tracked contact is still unmapped,
-    // this LID must belong to them. Common when onWhatsApp() doesn't return
-    // the `lid` field (older/partial Baileys versions) — we can't resolve
-    // proactively, so we bind on first arrival instead.
+    // Heuristic fallback: if only ONE tracked contact is still unmapped AND
+    // we called presenceSubscribe on it within the last ~10 seconds, this
+    // @lid event is almost certainly a response to OUR subscribe. Anything
+    // older is spurious traffic from the auth history (other contacts whose
+    // chats are still in sync) and we must not let it hijack the binding.
     const unmapped = Array.from(contactStatus.entries()).filter(
       ([storedJid]) => !phoneToLid.has(phoneFromJid(storedJid))
     );
     if (unmapped.length === 1) {
       const [storedJid, state] = unmapped[0];
       const phoneNum = phoneFromJid(storedJid);
-      lidToPhone.set(normalisedLid, phoneNum);
-      phoneToLid.set(phoneNum, normalisedLid);
-      logger.info(
-        { lid: normalisedLid, phone: phoneNum, name: state.name },
-        "Heuristically bound LID to sole unmapped contact"
+      const subAt = lastSubscribeAt.get(phoneNum) ?? 0;
+      const age = Date.now() - subAt;
+      if (age <= HEURISTIC_BIND_WINDOW_MS) {
+        lidToPhone.set(normalisedLid, phoneNum);
+        phoneToLid.set(phoneNum, normalisedLid);
+        logger.info(
+          { lid: normalisedLid, phone: phoneNum, name: state.name, ageMs: age },
+          "Heuristically bound LID to sole unmapped contact"
+        );
+        return state;
+      }
+      logger.debug(
+        { lid: normalisedLid, phone: phoneNum, ageMs: age },
+        "Skipping heuristic bind — too long since last subscribe"
       );
-      return state;
     }
   }
 
