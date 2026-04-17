@@ -45,7 +45,13 @@ async function main() {
 
   // 2. Set up Fastify
   const app = Fastify({ logger: false });
-  await app.register(cors, { origin: config.frontendUrl });
+  // CORS: allow the full set of methods we actually use. Fastify's default
+  // only allows GET/HEAD/POST, which breaks DELETE (remove contact) and PUT.
+  await app.register(cors, {
+    origin: config.frontendUrl,
+    methods: ["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  });
   await registerRoutes(app);
 
   // 3. Start listening FIRST (binds Fastify to the port)

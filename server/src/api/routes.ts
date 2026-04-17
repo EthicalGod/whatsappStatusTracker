@@ -65,7 +65,9 @@ export async function registerRoutes(app: FastifyInstance) {
   // ── Contacts ─────────────────────────────────────────────────────
 
   app.get("/api/contacts", async () => {
-    const contacts = await db.getAllContacts();
+    // Only active contacts — removed ones keep their rows for historical
+    // session data but should not appear in the sidebar.
+    const contacts = await db.getActiveContacts();
     const statuses = getCurrentStatuses();
 
     return contacts.map((c) => ({
@@ -148,8 +150,13 @@ export async function registerRoutes(app: FastifyInstance) {
     Params: { id: string };
     Querystring: { from?: string; to?: string };
   }>("/api/contacts/:id/analytics", async (req) => {
+    // `from`: start of the window 30 days ago at 00:00 UTC.
+    // `to`: *end* of today at 23:59:59.999 UTC — NOT the start of today,
+    //       otherwise every session recorded after midnight UTC would be
+    //       excluded from `recentSessions` (the sessions query uses
+    //       start_time <= to).
     const from = req.query.from || new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
-    const to = req.query.to || new Date().toISOString().slice(0, 10);
+    const to = req.query.to || new Date().toISOString();
     return getAnalytics(req.params.id, from, to);
   });
 

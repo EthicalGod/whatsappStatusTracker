@@ -1,9 +1,15 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  // Only set JSON content-type when we're actually sending a body. Fastify
+  // rejects bodyless requests that declare Content-Type: application/json
+  // with a 400 Bad Request, which broke DELETE /api/contacts/:id.
+  const headers: Record<string, string> = {};
+  if (options?.body) headers["Content-Type"] = "application/json";
+
   const res = await fetch(`${API_URL}${path}`, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers: { ...headers, ...(options?.headers as Record<string, string>) },
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
