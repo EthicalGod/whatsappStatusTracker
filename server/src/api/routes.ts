@@ -9,8 +9,14 @@ import { getSocket, getCurrentQR } from "../whatsapp/client";
 import { subscribeToContact, unsubscribeFromContact, getCurrentStatuses } from "../whatsapp/presence";
 import { getAnalytics } from "../services/analytics";
 import { saveSubscription } from "../services/notify";
+import { logger } from "../utils/logger";
 
 export async function registerRoutes(app: FastifyInstance) {
+
+  // ── Health check (fast, no DB, no WhatsApp) ──────────────────────
+  app.get("/api/health", async () => {
+    return { ok: true, timestamp: new Date().toISOString() };
+  });
 
   // ── QR Code for WhatsApp auth ────────────────────────────────────
 
@@ -60,24 +66,36 @@ export async function registerRoutes(app: FastifyInstance) {
   });
 
   app.post<{ Body: { phone: string; name: string } }>("/api/contacts", async (req, reply) => {
+    const start = Date.now();
+    logger.info({ body: req.body }, "POST /api/contacts received");
+
     const { phone, name } = req.body;
     if (!phone || !name) {
       return reply.status(400).send({ error: "phone and name are required" });
     }
 
-    const contact = await db.addContact(phone.replace(/\D/g, ""), name);
+    let contact;
+    try {
+      contact = await db.addContact(phone.replace(/\D/g, ""), name);
+      logger.info({ ms: Date.now() - start, contact: contact.id }, "Contact saved to DB");
+    } catch (err) {
+      logger.error({ err }, "DB insert failed");
+      return reply.status(500).send({ error: "Database error" });
+    }
 
-    // Fire-and-forget the WhatsApp subscription — don't block the HTTP response
-    // on a potentially slow Baileys call (e.g. during history sync).
-    setImmediate(async () => {
+    // Fire-and-forget the WhatsApp subscription
+    setImmediate(() => {
       try {
         const sock = getSocket();
-        await subscribeToContact(sock, contact);
-      } catch {
-        // will retry on next reconnect cycle
+        subscribeToContact(sock, contact).catch((err) =>
+          logger.error({ err }, "Background subscribe failed")
+        );
+      } catch (err) {
+        logger.warn("WhatsApp not connected yet — subscribe will retry");
       }
     });
 
+    logger.info({ ms: Date.now() - start }, "Responding 201");
     return reply.status(201).send(contact);
   });
 
