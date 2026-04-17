@@ -54,6 +54,15 @@ export async function startTracking(sock: WASocket) {
   // Register presence event handler
   sock.ev.on("presence.update", handlePresenceUpdate);
 
+  // Also log chat updates — sometimes WhatsApp sends presence here instead
+  sock.ev.on("chats.update", (updates) => {
+    for (const u of updates) {
+      if ((u as any).presences) {
+        logger.info({ u }, "chat.update with presences");
+      }
+    }
+  });
+
   // Stagger subscriptions to avoid rate limits
   for (let i = 0; i < contacts.length; i++) {
     const contact = contacts[i];
@@ -98,8 +107,17 @@ export async function subscribeToContact(sock: WASocket, contact: db.Contact) {
   });
 
   try {
+    logger.info({ jid: contact.jid, name: contact.name }, "Calling presenceSubscribe...");
     await withTimeout(sock.presenceSubscribe(contact.jid), 5000);
     logger.info({ jid: contact.jid, name: contact.name }, "Subscribed to new contact");
+
+    // Schedule periodic re-subscribes every 5 minutes for THIS contact.
+    // WhatsApp presence subscriptions expire, so we need to refresh them.
+    setInterval(() => {
+      if (contactStatus.has(contact.jid)) {
+        sock.presenceSubscribe(contact.jid).catch(() => {});
+      }
+    }, 5 * 60 * 1000);
   } catch (err) {
     logger.error({ err, jid: contact.jid }, "Failed to subscribe to new contact");
   }
@@ -129,17 +147,47 @@ async function resubscribeAll(sock: WASocket) {
   }
 }
 
+/** Extract just the phone number from any JID format. */
+function phoneFromJid(jid: string): string {
+  // JIDs come in formats: "919999414559@s.whatsapp.net", "919999414559:68@s.whatsapp.net",
+  //                       "224072738848971:68@lid", etc.
+  return jid.split("@")[0].split(":")[0].replace(/\D/g, "");
+}
+
+/** Look up a tracked contact by any JID form (matches phone number). */
+function findContactByJid(jid: string) {
+  const targetPhone = phoneFromJid(jid);
+  for (const [storedJid, state] of contactStatus) {
+    if (phoneFromJid(storedJid) === targetPhone) return state;
+  }
+  return undefined;
+}
+
 /** Handle incoming presence update from Baileys. */
 function handlePresenceUpdate(update: { id: string; presences: Record<string, { lastKnownPresence: string }> }) {
+  // LOG EVERY presence event — useful for debugging
+  logger.info({ id: update.id, presences: update.presences }, "presence.update event");
+
   const jid = update.id;
-  const state = contactStatus.get(jid);
-  if (!state) return; // not a tracked contact
+  const state = findContactByJid(jid);
+  if (!state) {
+    logger.debug({ jid, tracked: Array.from(contactStatus.keys()) }, "Presence for untracked JID");
+    return;
+  }
 
-  const presenceData = update.presences[jid];
-  if (!presenceData) return;
+  // The presences object may be keyed by a DIFFERENT JID format than `id`
+  // (e.g. LID vs regular JID). Find any presence entry in the object.
+  let presence: string | undefined;
+  for (const key of Object.keys(update.presences)) {
+    presence = update.presences[key]?.lastKnownPresence;
+    if (presence) break;
+  }
+  if (!presence) {
+    logger.warn({ id: jid, presences: update.presences }, "Presence update with no presence data");
+    return;
+  }
 
-  const presence = presenceData.lastKnownPresence;
-  // Baileys presence values: "available", "unavailable", "composing", "recording"
+  logger.info({ name: state.name, presence }, "Processing presence");
 
   if (presence === "available" || presence === "composing" || presence === "recording") {
     // Contact is ONLINE (composing/recording also mean online)
