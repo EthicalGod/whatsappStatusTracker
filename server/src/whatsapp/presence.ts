@@ -197,21 +197,14 @@ async function retryLidResolution() {
  */
 /**
  * Decide whether the tracker account should be marked "available" to
- * WhatsApp right now. Rules:
- *  - Any tracked contact with NO schedules forces 24/7 availability
- *    (otherwise we'd silently stop tracking them).
- *  - Otherwise, be available iff at least one scheduled contact's window
- *    includes the current time (union semantics).
- *  - If no contacts are tracked at all, we still broadcast available so
- *    the account stays linked and ready for new additions.
+ * WhatsApp right now. With a single global schedule:
+ *  - No schedule configured (empty) → always available (24/7 tracking).
+ *  - Schedule configured → available only when the current time falls
+ *    inside at least one of the global slots.
  */
 function shouldSelfBeAvailable(): boolean {
-  if (contactStatus.size === 0) return true;
-  for (const [, state] of contactStatus) {
-    if (!hasSchedules(state.contactId)) return true;
-    if (isWithinSchedule(state.contactId)) return true;
-  }
-  return false;
+  if (!hasSchedules()) return true;
+  return isWithinSchedule();
 }
 
 // Memoised so we can detect idle→active transitions and fire a fresh

@@ -50,7 +50,6 @@ export interface DailyStat {
 
 export interface ScheduleSlot {
   id?: number;
-  contact_id?: string;
   day_of_week: number; // 0=Sun..6=Sat
   start_time: string;  // "HH:MM"
   end_time: string;    // "HH:MM"
@@ -105,11 +104,11 @@ export const api = {
   getQr: () =>
     request<{ connected: boolean; qrDataUrl: string | null }>("/api/qr/data"),
 
-  getSchedules: (id: string) =>
-    request<ScheduleSlot[]>(`/api/contacts/${id}/schedules`),
+  getGlobalSchedule: () =>
+    request<ScheduleSlot[]>("/api/schedule/global"),
 
-  setSchedules: (id: string, slots: ScheduleSlot[]) =>
-    request<ScheduleSlot[]>(`/api/contacts/${id}/schedules`, {
+  setGlobalSchedule: (slots: ScheduleSlot[]) =>
+    request<ScheduleSlot[]>("/api/schedule/global", {
       method: "PUT",
       body: JSON.stringify(slots),
     }),

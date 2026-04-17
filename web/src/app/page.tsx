@@ -8,14 +8,19 @@ import { ContactDetail } from "@/components/ContactDetail";
 import { AddContactModal } from "@/components/AddContactModal";
 import { SignInModal } from "@/components/SignInModal";
 import { LiveActivityFeed } from "@/components/LiveActivityFeed";
+import { GlobalScheduleModal } from "@/components/GlobalScheduleModal";
 
 export default function Dashboard() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showSignIn, setShowSignIn] = useState(false);
+  const [showSchedule, setShowSchedule] = useState(false);
   const [connected, setConnected] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  // Activity feed buffer lives here (not in LiveActivityFeed) so events
+  // persist across contact-detail tab switches.
+  const [events, setEvents] = useState<PresenceUpdate[]>([]);
 
   const loadContacts = useCallback(async () => {
     try {
@@ -66,6 +71,10 @@ export default function Dashboard() {
             : c
         )
       );
+      setEvents((prev) => {
+        const next = [update, ...prev];
+        return next.length > 200 ? next.slice(0, 200) : next;
+      });
     });
 
     return () => {
@@ -166,13 +175,20 @@ export default function Dashboard() {
             <button
               onClick={() => setSelectedId(null)}
               title="Show the live activity feed"
-              className="text-xs font-medium text-[#075E54] hover:text-[#128C7E] border border-[#E9EDEF] hover:border-[#128C7E] px-3 py-1.5 rounded-full bg-white"
+              className="text-xs font-medium text-[#075E54] hover:text-[#128C7E] border border-[#E9EDEF] hover:border-[#128C7E] px-3 py-1.5 rounded-full bg-white whitespace-nowrap"
             >
               Login Activity
             </button>
             <button
+              onClick={() => setShowSchedule(true)}
+              title="Set global tracking schedule"
+              className="text-xs font-medium text-[#075E54] hover:text-[#128C7E] border border-[#E9EDEF] hover:border-[#128C7E] px-3 py-1.5 rounded-full bg-white whitespace-nowrap"
+            >
+              Schedule
+            </button>
+            <button
               onClick={() => setShowAddModal(true)}
-              className="text-xs font-medium text-white bg-[#25D366] hover:bg-[#20BD5A] px-3 py-1.5 rounded-full"
+              className="text-xs font-medium text-white bg-[#25D366] hover:bg-[#20BD5A] px-3 py-1.5 rounded-full whitespace-nowrap"
             >
               + Add
             </button>
@@ -203,7 +219,7 @@ export default function Dashboard() {
               }}
             />
           ) : (
-            <LiveActivityFeed />
+            <LiveActivityFeed events={events} />
           )}
         </div>
       </div>
@@ -213,6 +229,12 @@ export default function Dashboard() {
         open={showAddModal}
         onClose={() => setShowAddModal(false)}
         onAdded={loadContacts}
+      />
+
+      {/* Global schedule modal */}
+      <GlobalScheduleModal
+        open={showSchedule}
+        onClose={() => setShowSchedule(false)}
       />
 
       {/* Sign in (WhatsApp QR) modal */}

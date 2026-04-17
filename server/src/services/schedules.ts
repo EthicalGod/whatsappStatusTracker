@@ -1,8 +1,8 @@
 /**
- * Per-contact tracking windows.
+ * Global tracking window.
  *
- * Cached in memory to keep the presence hot path cheap. The cache is
- * refreshed on startup and whenever a schedule is saved via the API.
+ * One schedule applies to every tracked contact. Cached in memory for the
+ * presence hot path; refreshed on boot and whenever the schedule is saved.
  */
 
 import * as db from "../db/queries";
@@ -10,8 +10,7 @@ import { logger } from "../utils/logger";
 
 type Slot = { day_of_week: number; start_minutes: number; end_minutes: number };
 
-// contactId -> list of slots
-const cache = new Map<string, Slot[]>();
+let cache: Slot[] = [];
 
 function toMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(":");
@@ -19,42 +18,29 @@ function toMinutes(hhmm: string): number {
 }
 
 export async function refreshScheduleCache() {
-  const all = await db.getAllSchedules();
-  cache.clear();
-  for (const s of all) {
-    const arr = cache.get(s.contact_id) ?? [];
-    arr.push({
-      day_of_week: s.day_of_week,
-      start_minutes: toMinutes(s.start_time),
-      end_minutes: toMinutes(s.end_time),
-    });
-    cache.set(s.contact_id, arr);
-  }
-  logger.info({ contacts: cache.size }, "Schedule cache refreshed");
+  const rows = await db.getGlobalSchedule();
+  cache = rows.map((r) => ({
+    day_of_week: r.day_of_week,
+    start_minutes: toMinutes(r.start_time),
+    end_minutes: toMinutes(r.end_time),
+  }));
+  logger.info({ slots: cache.length }, "Global schedule cache refreshed");
 }
 
 /**
- * True if the given contact should be tracked *right now*.
- * A contact with no schedules is tracked 24/7.
+ * True if tracking should be active right now.
+ * Empty schedule = 24/7 tracking (no restriction).
  */
-export function isWithinSchedule(contactId: string, at: Date = new Date()): boolean {
-  const slots = cache.get(contactId);
-  if (!slots || slots.length === 0) return true; // unrestricted
-
-  const dow = at.getDay(); // 0=Sun
+export function isWithinSchedule(_contactId?: string, at: Date = new Date()): boolean {
+  if (cache.length === 0) return true; // unrestricted
+  const dow = at.getDay();
   const mins = at.getHours() * 60 + at.getMinutes();
-  return slots.some(
+  return cache.some(
     (s) => s.day_of_week === dow && mins >= s.start_minutes && mins < s.end_minutes
   );
 }
 
-/** Returns contact ids that currently have at least one schedule configured. */
-export function scheduledContactIds(): string[] {
-  return Array.from(cache.keys());
-}
-
-/** True if this contact has any schedules defined (i.e. is NOT tracked 24/7). */
-export function hasSchedules(contactId: string): boolean {
-  const slots = cache.get(contactId);
-  return !!(slots && slots.length > 0);
+/** Returns true if any global schedule slots are configured. */
+export function hasSchedules(_contactId?: string): boolean {
+  return cache.length > 0;
 }

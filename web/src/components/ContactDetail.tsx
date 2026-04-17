@@ -7,7 +7,6 @@ import { StatusDot } from "./StatusDot";
 import { StatsCards } from "./StatsCards";
 import { ActivityChart } from "./ActivityChart";
 import { SessionTimeline } from "./SessionTimeline";
-import { ScheduleEditor } from "./ScheduleEditor";
 import { timeAgo } from "@/lib/utils";
 
 interface Props {
@@ -19,7 +18,7 @@ interface Props {
 
 export function ContactDetail({ contactId, contact, onRemove, onBack }: Props) {
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
-  const [tab, setTab] = useState<"overview" | "sessions" | "schedule">("overview");
+  const [tab, setTab] = useState<"overview" | "sessions">("overview");
   const [removing, setRemoving] = useState(false);
   // Used to force live duration recalc every second while a session is open
   const [nowTick, setNowTick] = useState(Date.now());
@@ -197,16 +196,6 @@ export function ContactDetail({ contactId, contact, onRemove, onBack }: Props) {
         >
           Sessions
         </button>
-        <button
-          onClick={() => setTab("schedule")}
-          className={`flex-1 py-3 text-sm font-medium border-b-2 transition-colors ${
-            tab === "schedule"
-              ? "text-[#075E54] border-[#075E54]"
-              : "text-[#667781] border-transparent hover:text-[#111B21]"
-          }`}
-        >
-          Schedule
-        </button>
       </div>
 
       {/* Content */}
@@ -246,8 +235,6 @@ export function ContactDetail({ contactId, contact, onRemove, onBack }: Props) {
             <SessionTimeline sessions={liveAnalytics?.recentSessions || []} />
           </div>
         )}
-
-        {tab === "schedule" && <ScheduleEditor contactId={contactId} />}
       </div>
     </div>
   );

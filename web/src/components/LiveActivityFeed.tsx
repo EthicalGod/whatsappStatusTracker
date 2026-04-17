@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { getSocket, PresenceUpdate } from "@/lib/socket";
+import { useMemo } from "react";
+import { PresenceUpdate } from "@/lib/socket";
 
-const MAX_ENTRIES = 200;
+interface Props {
+  events: PresenceUpdate[];
+}
 
 function formatTime(ts: string): string {
   const d = new Date(ts);
@@ -11,28 +13,29 @@ function formatTime(ts: string): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-export function LiveActivityFeed() {
-  const [events, setEvents] = useState<PresenceUpdate[]>([]);
-  // Track prior online timestamps per contact so OFFLINE entries can show
-  // the session length, matching the Python tracker's "(172s)" suffix.
-  const lastOnlineRef = useRef<Map<string, number>>(new Map());
-
-  useEffect(() => {
-    const socket = getSocket();
-    const handler = (update: PresenceUpdate) => {
-      setEvents((prev) => {
-        const next = [update, ...prev];
-        return next.length > MAX_ENTRIES ? next.slice(0, MAX_ENTRIES) : next;
-      });
-      if (update.status === "online") {
-        lastOnlineRef.current.set(update.contactId, new Date(update.timestamp).getTime());
+export function LiveActivityFeed({ events }: Props) {
+  // Precompute per-contact online→offline durations so OFFLINE rows can show
+  // "(Xs)" like the Python tracker. events is newest-first; walk it to pair
+  // each OFFLINE with the most recent prior ONLINE for that contact.
+  const durationByEventIdx = useMemo(() => {
+    const map = new Map<number, number>();
+    // Walk chronologically (oldest first) so we can track the open online per contact
+    const openOnlineAt = new Map<string, number>();
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i];
+      const t = new Date(e.timestamp).getTime();
+      if (e.status === "online") {
+        openOnlineAt.set(e.contactId, t);
+      } else {
+        const startedAt = openOnlineAt.get(e.contactId);
+        if (startedAt) {
+          map.set(i, Math.max(0, Math.round((t - startedAt) / 1000)));
+          openOnlineAt.delete(e.contactId);
+        }
       }
-    };
-    socket.on("presence:update", handler);
-    return () => {
-      socket.off("presence:update", handler);
-    };
-  }, []);
+    }
+    return map;
+  }, [events]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-[#F0F2F5]">
@@ -61,17 +64,7 @@ export function LiveActivityFeed() {
           <ul className="font-mono text-sm space-y-1">
             {events.map((e, idx) => {
               const isOnline = e.status === "online";
-              let suffix = "";
-              if (!isOnline) {
-                const startedAt = lastOnlineRef.current.get(e.contactId);
-                if (startedAt) {
-                  const dur = Math.max(
-                    0,
-                    Math.round((new Date(e.timestamp).getTime() - startedAt) / 1000)
-                  );
-                  suffix = `  (${dur}s)`;
-                }
-              }
+              const durSecs = durationByEventIdx.get(idx);
               return (
                 <li
                   key={`${e.contactId}-${e.timestamp}-${idx}`}
@@ -95,8 +88,8 @@ export function LiveActivityFeed() {
                   >
                     {isOnline ? "ONLINE" : "OFFLINE"}
                   </span>
-                  {suffix && (
-                    <span className="text-[#667781]">{suffix}</span>
+                  {durSecs != null && (
+                    <span className="text-[#667781]">  ({durSecs}s)</span>
                   )}
                 </li>
               );

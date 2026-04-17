@@ -194,6 +194,50 @@ export async function setSchedules(
   return getSchedules(contactId);
 }
 
+// ── Global Schedule ───────────────────────────────────────────────────
+
+export interface GlobalSlot {
+  id?: number;
+  day_of_week: number;
+  start_time: string;
+  end_time: string;
+}
+
+export async function getGlobalSchedule(): Promise<GlobalSlot[]> {
+  const { rows } = await pool.query(
+    `SELECT id, day_of_week,
+            to_char(start_time, 'HH24:MI') AS start_time,
+            to_char(end_time,   'HH24:MI') AS end_time
+       FROM global_tracking_schedule
+      ORDER BY day_of_week, start_time`
+  );
+  return rows;
+}
+
+export async function setGlobalSchedule(
+  slots: Array<{ day_of_week: number; start_time: string; end_time: string }>
+): Promise<GlobalSlot[]> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("DELETE FROM global_tracking_schedule");
+    for (const s of slots) {
+      await client.query(
+        `INSERT INTO global_tracking_schedule (day_of_week, start_time, end_time)
+         VALUES ($1, $2, $3)`,
+        [s.day_of_week, s.start_time, s.end_time]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+  return getGlobalSchedule();
+}
+
 export async function getAllDailyStats(date: string) {
   const { rows } = await pool.query(
     `SELECT ds.*, c.name, c.phone

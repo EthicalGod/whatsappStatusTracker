@@ -155,24 +155,19 @@ export async function registerRoutes(app: FastifyInstance) {
     return db.getSessions(req.params.id, from, to);
   });
 
-  // ── Tracking Schedules ───────────────────────────────────────────
+  // ── Global Tracking Schedule ─────────────────────────────────────
 
-  app.get<{ Params: { id: string } }>(
-    "/api/contacts/:id/schedules",
-    async (req) => {
-      return db.getSchedules(req.params.id);
-    }
-  );
+  app.get("/api/schedule/global", async () => {
+    return db.getGlobalSchedule();
+  });
 
-  // Replace the whole schedule for a contact in one call. Body:
+  // Replace the whole global schedule atomically. Body:
   //   [] — clears the schedule (track 24/7)
   //   [{ day_of_week, start_time: "HH:MM", end_time: "HH:MM" }, ...]
   app.put<{
-    Params: { id: string };
     Body: Array<{ day_of_week: number; start_time: string; end_time: string }>;
-  }>("/api/contacts/:id/schedules", async (req, reply) => {
+  }>("/api/schedule/global", async (req, reply) => {
     const slots = Array.isArray(req.body) ? req.body : [];
-    // Minimal validation — Postgres CHECK constraints catch the rest
     for (const s of slots) {
       if (
         typeof s.day_of_week !== "number" ||
@@ -185,10 +180,8 @@ export async function registerRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: "Invalid slot", slot: s });
       }
     }
-    const saved = await db.setSchedules(req.params.id, slots);
+    const saved = await db.setGlobalSchedule(slots);
     await refreshScheduleCache();
-    // Let the next tick re-evaluate self-availability so slots take effect
-    // immediately instead of on the next idle→active comparison.
     forceAvailabilityReevaluation();
     return saved;
   });

@@ -57,6 +57,15 @@ CREATE TABLE IF NOT EXISTS tracking_schedules (
 );
 CREATE INDEX IF NOT EXISTS idx_tracking_schedules_contact ON tracking_schedules(contact_id, day_of_week);
 
+-- Global tracking schedule applied to every contact. Zero rows = track 24/7.
+CREATE TABLE IF NOT EXISTS global_tracking_schedule (
+    id           BIGSERIAL PRIMARY KEY,
+    day_of_week  SMALLINT NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
+    start_time   TIME NOT NULL,
+    end_time     TIME NOT NULL,
+    CHECK (end_time > start_time)
+);
+
 -- Push notification subscriptions
 CREATE TABLE IF NOT EXISTS push_subscriptions (
     id              BIGSERIAL PRIMARY KEY,
