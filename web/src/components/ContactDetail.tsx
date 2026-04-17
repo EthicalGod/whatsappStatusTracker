@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { api, Contact, Analytics } from "@/lib/api";
+import { getSocket, PresenceUpdate } from "@/lib/socket";
 import { StatusDot } from "./StatusDot";
 import { StatsCards } from "./StatsCards";
 import { ActivityChart } from "./ActivityChart";
@@ -18,6 +19,8 @@ export function ContactDetail({ contactId, contact, onRemove }: Props) {
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [tab, setTab] = useState<"overview" | "sessions">("overview");
   const [removing, setRemoving] = useState(false);
+  // Used to force live duration recalc every second while a session is open
+  const [nowTick, setNowTick] = useState(Date.now());
 
   const loadAnalytics = useCallback(async () => {
     try {
@@ -28,9 +31,63 @@ export function ContactDetail({ contactId, contact, onRemove }: Props) {
     }
   }, [contactId]);
 
+  // Initial load + refetch when contact changes
   useEffect(() => {
     loadAnalytics();
   }, [loadAnalytics]);
+
+  // Refetch analytics when THIS contact's presence changes (online/offline)
+  useEffect(() => {
+    const socket = getSocket();
+    const handler = (update: PresenceUpdate) => {
+      if (update.contactId === contactId) {
+        // Small delay so the backend has time to write the session
+        setTimeout(loadAnalytics, 500);
+      }
+    };
+    socket.on("presence:update", handler);
+    return () => {
+      socket.off("presence:update", handler);
+    };
+  }, [contactId, loadAnalytics]);
+
+  // Periodic refresh while viewing this contact (catches stats from
+  // in-progress sessions + hourly aggregation on the backend)
+  useEffect(() => {
+    const id = setInterval(loadAnalytics, 30_000);
+    return () => clearInterval(id);
+  }, [loadAnalytics]);
+
+  // Tick every second while contact is online so live session duration updates
+  useEffect(() => {
+    if (contact?.currentStatus !== "online") return;
+    const id = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [contact?.currentStatus]);
+
+  // Compute LIVE stats — add time from any in-progress session to the totals
+  const liveAnalytics = useMemo(() => {
+    if (!analytics) return null;
+    const openSession = analytics.recentSessions.find((s) => !s.end_time);
+    if (!openSession) return analytics;
+
+    const liveSeconds = Math.floor(
+      (nowTick - new Date(openSession.start_time).getTime()) / 1000
+    );
+
+    const liveTotal = analytics.summary.totalOnlineSeconds + liveSeconds;
+    const daysTracked = Math.max(analytics.summary.daysTracked, 1);
+
+    return {
+      ...analytics,
+      summary: {
+        ...analytics.summary,
+        totalOnlineSeconds: liveTotal,
+        totalOnlineHours: Math.round((liveTotal / 3600) * 10) / 10,
+        avgDailyOnlineMinutes: Math.round(liveTotal / daysTracked / 60),
+      },
+    };
+  }, [analytics, nowTick]);
 
   async function handleRemove() {
     if (!confirm(`Stop tracking ${contact?.name}?`)) return;
@@ -113,13 +170,13 @@ export function ContactDetail({ contactId, contact, onRemove }: Props) {
       <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-[#F0F2F5]">
         {tab === "overview" && (
           <>
-            <StatsCards analytics={analytics} />
+            <StatsCards analytics={liveAnalytics} />
 
             <div className="bg-white rounded-lg p-4 border border-[#E9EDEF]">
               <h3 className="text-sm font-medium text-[#111B21] mb-3">
                 Daily Activity (last 30 days)
               </h3>
-              <ActivityChart data={analytics?.dailyStats || []} />
+              <ActivityChart data={liveAnalytics?.dailyStats || []} />
             </div>
           </>
         )}
@@ -129,7 +186,7 @@ export function ContactDetail({ contactId, contact, onRemove }: Props) {
             <h3 className="text-sm font-medium text-[#111B21] mb-3">
               Recent Sessions
             </h3>
-            <SessionTimeline sessions={analytics?.recentSessions || []} />
+            <SessionTimeline sessions={liveAnalytics?.recentSessions || []} />
           </div>
         )}
       </div>

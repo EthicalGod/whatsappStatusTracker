@@ -16,6 +16,7 @@ import { WASocket } from "@whiskeysockets/baileys";
 import { config } from "../config";
 import { logger } from "../utils/logger";
 import * as db from "../db/queries";
+import { aggregateDay } from "../services/analytics";
 
 // In-memory state: tracks current online status per JID
 const contactStatus = new Map<string, {
@@ -61,17 +62,13 @@ export async function startTracking(sock: WASocket) {
   // Register presence event handler
   sock.ev.on("presence.update", handlePresenceUpdate);
 
-  // Build LID ↔ phone mapping from chat events.
-  // WhatsApp sends presence updates with LIDs, but we subscribe with phone JIDs.
+  // Silently build LID ↔ phone mapping from chat/message events.
+  // WhatsApp sends presence updates with LIDs but we subscribe with phone JIDs.
   sock.ev.on("chats.update" as any, (updates: any[]) => {
-    for (const chat of updates) {
-      extractJidMapping(chat);
-    }
+    for (const chat of updates) extractJidMapping(chat);
   });
   sock.ev.on("chats.upsert" as any, (chats: any[]) => {
-    for (const chat of chats) {
-      extractJidMapping(chat);
-    }
+    for (const chat of chats) extractJidMapping(chat);
   });
   sock.ev.on("messages.upsert" as any, ({ messages }: any) => {
     for (const msg of messages || []) {
@@ -222,29 +219,17 @@ function findContactByJid(jid: string) {
 
 /** Handle incoming presence update from Baileys. */
 function handlePresenceUpdate(update: { id: string; presences: Record<string, { lastKnownPresence: string }> }) {
-  // LOG EVERY presence event — useful for debugging
-  logger.info({ id: update.id, presences: update.presences }, "presence.update event");
-
   const jid = update.id;
   const state = findContactByJid(jid);
-  if (!state) {
-    logger.debug({ jid, tracked: Array.from(contactStatus.keys()) }, "Presence for untracked JID");
-    return;
-  }
+  if (!state) return; // untracked contact
 
-  // The presences object may be keyed by a DIFFERENT JID format than `id`
-  // (e.g. LID vs regular JID). Find any presence entry in the object.
+  // Pull the presence value — may be keyed by a different JID format than `id`
   let presence: string | undefined;
   for (const key of Object.keys(update.presences)) {
     presence = update.presences[key]?.lastKnownPresence;
     if (presence) break;
   }
-  if (!presence) {
-    logger.warn({ id: jid, presences: update.presences }, "Presence update with no presence data");
-    return;
-  }
-
-  logger.info({ name: state.name, presence }, "Processing presence");
+  if (!presence) return;
 
   if (presence === "available" || presence === "composing" || presence === "recording") {
     // Contact is ONLINE (composing/recording also mean online)
@@ -281,9 +266,14 @@ function handlePresenceUpdate(update: { id: string; presences: Record<string, { 
         db.logPresence(state.contactId, "offline").catch((err) =>
           logger.error(err, "Failed to log presence")
         );
-        db.closeSession(state.contactId).catch((err) =>
-          logger.error(err, "Failed to close session")
-        );
+        // Close the session AND re-aggregate today's stats so the dashboard
+        // shows fresh totals within seconds (not just hourly cron).
+        db.closeSession(state.contactId)
+          .then(() => {
+            const today = new Date().toISOString().slice(0, 10);
+            return aggregateDay(today);
+          })
+          .catch((err) => logger.error(err, "Failed to close session / aggregate"));
 
         listeners.forEach((cb) => cb(state.contactId, state.name, "offline"));
       }, config.tracking.offlineGracePeriodMs);

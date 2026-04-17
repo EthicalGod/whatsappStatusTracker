@@ -53,7 +53,8 @@ export async function connectWhatsApp(): Promise<WASocket> {
     auth: state,
     // Browsers.macOS registers as a valid client — needed to avoid 405
     browser: Browsers.macOS("GST Tracker"),
-    logger: logger.child({ module: "baileys" }) as any,
+    // Silence Baileys' verbose internal logs — we only need WARN+ from it
+    logger: logger.child({ module: "baileys" }, { level: "warn" }) as any,
     syncFullHistory: false,
     // Mark our own client as online — required for WhatsApp to push us
     // presence updates from other contacts. With false, WhatsApp treats us
