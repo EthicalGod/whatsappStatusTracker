@@ -49,19 +49,27 @@ export function getCurrentStatuses() {
 /** Subscribe to presence for all active contacts. */
 export async function startTracking(sock: WASocket) {
   const contacts = await db.getActiveContacts();
-  logger.info({ count: contacts.length }, "Starting presence tracking");
+  logger.info({ count: contacts.length, jids: contacts.map(c => c.jid) }, "Starting presence tracking");
 
   // Register presence event handler
   sock.ev.on("presence.update", handlePresenceUpdate);
 
-  // Also log chat updates — sometimes WhatsApp sends presence here instead
-  sock.ev.on("chats.update", (updates) => {
-    for (const u of updates) {
-      if ((u as any).presences) {
-        logger.info({ u }, "chat.update with presences");
-      }
-    }
-  });
+  // DIAGNOSTIC: log every Baileys event so we can see what's flowing
+  const interestingEvents = [
+    "presence.update",
+    "chats.update",
+    "chats.upsert",
+    "contacts.update",
+    "contacts.upsert",
+    "messages.upsert",
+  ];
+  for (const evt of interestingEvents) {
+    sock.ev.on(evt as any, (data: any) => {
+      if (evt === "presence.update") return; // already handled + logged
+      if (evt === "messages.upsert") return; // too noisy
+      logger.info({ event: evt, data }, `baileys event: ${evt}`);
+    });
+  }
 
   // Stagger subscriptions to avoid rate limits
   for (let i = 0; i < contacts.length; i++) {

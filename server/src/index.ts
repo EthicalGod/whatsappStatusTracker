@@ -41,11 +41,15 @@ async function main() {
   await connectWhatsApp();
 
   // Start tracking once connected — use getSocket() for the live socket.
+  // Wait a few seconds after "open" for Baileys to fully initialise.
   let hasStarted = false;
   onConnectionChange((update) => {
     if (update.connection === "open" && !hasStarted) {
       hasStarted = true;
-      startTracking(getSocket());
+      setTimeout(() => {
+        logger.info("Starting tracking after 5s settling delay");
+        startTracking(getSocket());
+      }, 5000);
     }
   });
 

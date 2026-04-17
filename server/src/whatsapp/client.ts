@@ -55,8 +55,10 @@ export async function connectWhatsApp(): Promise<WASocket> {
     browser: Browsers.macOS("GST Tracker"),
     logger: logger.child({ module: "baileys" }) as any,
     syncFullHistory: false,
-    // Match real browser behaviour — some WhatsApp checks need these
-    markOnlineOnConnect: false,
+    // Mark our own client as online — required for WhatsApp to push us
+    // presence updates from other contacts. With false, WhatsApp treats us
+    // as a background/offline client and sends no presence events.
+    markOnlineOnConnect: true,
     generateHighQualityLinkPreview: false,
   });
 
