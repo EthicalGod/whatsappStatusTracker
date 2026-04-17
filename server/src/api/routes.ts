@@ -5,7 +5,7 @@
 import { FastifyInstance } from "fastify";
 import QRCode from "qrcode";
 import * as db from "../db/queries";
-import { getSocket, getCurrentQR } from "../whatsapp/client";
+import { getSocket, getCurrentQR, logoutWhatsApp } from "../whatsapp/client";
 import { subscribeToContact, unsubscribeFromContact, getCurrentStatuses } from "../whatsapp/presence";
 import { getAnalytics } from "../services/analytics";
 import { saveSubscription } from "../services/notify";
@@ -16,6 +16,16 @@ export async function registerRoutes(app: FastifyInstance) {
   // ── Health check (fast, no DB, no WhatsApp) ──────────────────────
   app.get("/api/health", async () => {
     return { ok: true, timestamp: new Date().toISOString() };
+  });
+
+  // ── Log out of WhatsApp ──────────────────────────────────────────
+  app.post("/api/whatsapp/logout", async (_req, reply) => {
+    try {
+      await logoutWhatsApp();
+      return reply.status(200).send({ ok: true, message: "Logged out. Re-scan QR to reconnect." });
+    } catch (err: any) {
+      return reply.status(500).send({ error: err.message });
+    }
   });
 
   // ── QR Code for WhatsApp auth ────────────────────────────────────

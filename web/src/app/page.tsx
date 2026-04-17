@@ -12,6 +12,7 @@ export default function Dashboard() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const loadContacts = useCallback(async () => {
     try {
@@ -21,6 +22,22 @@ export default function Dashboard() {
       // API not reachable yet
     }
   }, []);
+
+  async function handleLogout() {
+    if (!confirm("Sign out of WhatsApp? You'll need to scan the QR code again to reconnect.")) {
+      return;
+    }
+    setLoggingOut(true);
+    try {
+      await api.whatsappLogout();
+      // Open QR page in a new tab so the user can rescan
+      window.open("/api/qr", "_blank");
+    } catch (err: any) {
+      alert("Logout failed: " + (err.message || "unknown error"));
+    } finally {
+      setLoggingOut(false);
+    }
+  }
 
   useEffect(() => {
     loadContacts();
@@ -75,6 +92,20 @@ export default function Dashboard() {
             {connected ? "Live" : "Connecting..."}
           </span>
         </div>
+
+        {/* Sign out button */}
+        <button
+          onClick={handleLogout}
+          disabled={loggingOut}
+          title="Sign out of WhatsApp (QR re-scan required)"
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border border-white/20 hover:border-white/40 hover:bg-white/10 transition-colors disabled:opacity-50"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+          </svg>
+          {loggingOut ? "Signing out..." : "Sign Out"}
+        </button>
 
         {onlineCount > 0 && (
           <span className="bg-[#25D366] text-white text-xs font-bold px-2 py-0.5 rounded-full">

@@ -40,6 +40,36 @@ export function getCurrentQR(): string | null {
   return currentQR;
 }
 
+/**
+ * Log out from WhatsApp and clear the persisted session.
+ * On next connection the user will need to scan a QR code again.
+ */
+export async function logoutWhatsApp(): Promise<void> {
+  if (!socket) throw new Error("WhatsApp client not initialised");
+
+  try {
+    await socket.logout();
+  } catch (err) {
+    logger.warn({ err }, "Baileys logout() failed — forcing auth clear");
+  }
+
+  // Wipe the auth directory so next startup starts fresh with a QR
+  const fs = await import("fs/promises");
+  try {
+    await fs.rm(AUTH_DIR, { recursive: true, force: true });
+    await fs.mkdir(AUTH_DIR, { recursive: true });
+    logger.info("Auth state cleared");
+  } catch (err) {
+    logger.error({ err }, "Could not clear auth_info directory");
+  }
+
+  // Null out the socket so getSocket() throws until re-auth completes
+  socket = null;
+
+  // Reconnect — this will display a fresh QR code for scanning
+  setTimeout(() => connectWhatsApp(), 2000);
+}
+
 export async function connectWhatsApp(): Promise<WASocket> {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 

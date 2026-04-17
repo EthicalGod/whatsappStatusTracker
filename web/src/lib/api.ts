@@ -85,6 +85,9 @@ export const api = {
     return request<Analytics>(`/api/contacts/${id}/analytics?${params}`);
   },
 
+  whatsappLogout: () =>
+    request<{ ok: boolean; message: string }>("/api/whatsapp/logout", { method: "POST" }),
+
   getDailySummary: (date?: string) => {
     const params = date ? `?date=${date}` : "";
     return request<DailyStat[]>(`/api/analytics/summary${params}`);
