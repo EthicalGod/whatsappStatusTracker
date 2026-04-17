@@ -8,6 +8,7 @@ import * as db from "../db/queries";
 import { getSocket, getCurrentQR, logoutWhatsApp, isWhatsAppConnected } from "../whatsapp/client";
 import { subscribeToContact, unsubscribeFromContact, getCurrentStatuses } from "../whatsapp/presence";
 import { getAnalytics } from "../services/analytics";
+import { refreshScheduleCache } from "../services/schedules";
 import { saveSubscription } from "../services/notify";
 import { logger } from "../utils/logger";
 
@@ -151,6 +152,41 @@ export async function registerRoutes(app: FastifyInstance) {
     const from = req.query.from || new Date(Date.now() - 7 * 86400000).toISOString();
     const to = req.query.to || new Date().toISOString();
     return db.getSessions(req.params.id, from, to);
+  });
+
+  // ── Tracking Schedules ───────────────────────────────────────────
+
+  app.get<{ Params: { id: string } }>(
+    "/api/contacts/:id/schedules",
+    async (req) => {
+      return db.getSchedules(req.params.id);
+    }
+  );
+
+  // Replace the whole schedule for a contact in one call. Body:
+  //   [] — clears the schedule (track 24/7)
+  //   [{ day_of_week, start_time: "HH:MM", end_time: "HH:MM" }, ...]
+  app.put<{
+    Params: { id: string };
+    Body: Array<{ day_of_week: number; start_time: string; end_time: string }>;
+  }>("/api/contacts/:id/schedules", async (req, reply) => {
+    const slots = Array.isArray(req.body) ? req.body : [];
+    // Minimal validation — Postgres CHECK constraints catch the rest
+    for (const s of slots) {
+      if (
+        typeof s.day_of_week !== "number" ||
+        s.day_of_week < 0 ||
+        s.day_of_week > 6 ||
+        !/^\d{2}:\d{2}$/.test(s.start_time) ||
+        !/^\d{2}:\d{2}$/.test(s.end_time) ||
+        s.start_time >= s.end_time
+      ) {
+        return reply.status(400).send({ error: "Invalid slot", slot: s });
+      }
+    }
+    const saved = await db.setSchedules(req.params.id, slots);
+    await refreshScheduleCache();
+    return saved;
   });
 
   // ── Analytics ────────────────────────────────────────────────────

@@ -45,6 +45,18 @@ CREATE TABLE IF NOT EXISTS daily_stats (
 );
 CREATE INDEX IF NOT EXISTS idx_daily_stats_contact_date ON daily_stats(contact_id, date DESC);
 
+-- Per-contact tracking windows. Zero rows for a contact = track 24/7.
+-- Any rows = only track during matching windows. day_of_week 0=Sun..6=Sat.
+CREATE TABLE IF NOT EXISTS tracking_schedules (
+    id           BIGSERIAL PRIMARY KEY,
+    contact_id   UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    day_of_week  SMALLINT NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
+    start_time   TIME NOT NULL,
+    end_time     TIME NOT NULL,
+    CHECK (end_time > start_time)
+);
+CREATE INDEX IF NOT EXISTS idx_tracking_schedules_contact ON tracking_schedules(contact_id, day_of_week);
+
 -- Push notification subscriptions
 CREATE TABLE IF NOT EXISTS push_subscriptions (
     id              BIGSERIAL PRIMARY KEY,

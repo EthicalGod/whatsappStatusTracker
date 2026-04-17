@@ -135,6 +135,65 @@ export async function getDailyStats(contactId: string, from: string, to: string)
   return rows;
 }
 
+// ── Tracking Schedules ────────────────────────────────────────────────
+
+export interface Schedule {
+  id: number;
+  contact_id: string;
+  day_of_week: number; // 0=Sun..6=Sat
+  start_time: string;  // "HH:MM" or "HH:MM:SS"
+  end_time: string;
+}
+
+export async function getSchedules(contactId: string): Promise<Schedule[]> {
+  const { rows } = await pool.query(
+    `SELECT id, contact_id, day_of_week,
+            to_char(start_time, 'HH24:MI') AS start_time,
+            to_char(end_time,   'HH24:MI') AS end_time
+       FROM tracking_schedules
+      WHERE contact_id = $1
+      ORDER BY day_of_week, start_time`,
+    [contactId]
+  );
+  return rows;
+}
+
+export async function getAllSchedules(): Promise<Schedule[]> {
+  const { rows } = await pool.query(
+    `SELECT id, contact_id, day_of_week,
+            to_char(start_time, 'HH24:MI') AS start_time,
+            to_char(end_time,   'HH24:MI') AS end_time
+       FROM tracking_schedules`
+  );
+  return rows;
+}
+
+/** Replace all schedules for a contact atomically. */
+export async function setSchedules(
+  contactId: string,
+  slots: Array<{ day_of_week: number; start_time: string; end_time: string }>
+): Promise<Schedule[]> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("DELETE FROM tracking_schedules WHERE contact_id = $1", [contactId]);
+    for (const s of slots) {
+      await client.query(
+        `INSERT INTO tracking_schedules (contact_id, day_of_week, start_time, end_time)
+         VALUES ($1, $2, $3, $4)`,
+        [contactId, s.day_of_week, s.start_time, s.end_time]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+  return getSchedules(contactId);
+}
+
 export async function getAllDailyStats(date: string) {
   const { rows } = await pool.query(
     `SELECT ds.*, c.name, c.phone

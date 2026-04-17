@@ -18,6 +18,7 @@ import { onPresenceChange } from "./whatsapp/presence";
 import { registerRoutes } from "./api/routes";
 import { setupWebSocket } from "./api/websocket";
 import { aggregateDay } from "./services/analytics";
+import { refreshScheduleCache } from "./services/schedules";
 import { notifyOnline } from "./services/notify";
 
 /**
@@ -41,6 +42,7 @@ async function main() {
   // 1. Initialise database
   await initDB();
   await closeOrphanSessions();
+  await refreshScheduleCache();
   logger.info("Database ready");
 
   // 2. Set up Fastify

@@ -17,6 +17,7 @@ import { config } from "../config";
 import { logger } from "../utils/logger";
 import * as db from "../db/queries";
 import { aggregateDay } from "../services/analytics";
+import { isWithinSchedule } from "../services/schedules";
 import { getSocket } from "./client";
 
 // In-memory state: tracks current online status per JID
@@ -121,6 +122,36 @@ export async function startTracking(sock: WASocket) {
     setTimeout(() => retryLidResolution(), 20_000);
     setTimeout(() => retryLidResolution(), 60_000);
     setInterval(() => resubscribeAll(), config.tracking.resubscribeIntervalMs);
+    setInterval(enforceSchedules, 60_000); // close out-of-window sessions
+  }
+}
+
+/**
+ * Once a minute, check every in-memory online contact. If the current time
+ * has drifted outside that contact's tracking window, treat it as an OFFLINE
+ * transition — close the session, aggregate, and fire the WS event.
+ */
+async function enforceSchedules() {
+  for (const [jid, state] of contactStatus) {
+    if (!state.isOnline) continue;
+    if (isWithinSchedule(state.contactId)) continue;
+
+    logger.info({ name: state.name }, "Window ended — closing session");
+    state.isOnline = false;
+    state.lastChange = new Date();
+    if (state.offlineTimer) {
+      clearTimeout(state.offlineTimer);
+      state.offlineTimer = undefined;
+    }
+    db.logPresence(state.contactId, "offline").catch(() => {});
+    try {
+      await db.closeSession(state.contactId);
+      const today = new Date().toISOString().slice(0, 10);
+      await aggregateDay(today);
+    } catch (err) {
+      logger.error({ err, jid }, "Failed to close out-of-window session");
+    }
+    listeners.forEach((cb) => cb(state.contactId, state.name, "offline"));
   }
 }
 
@@ -389,6 +420,12 @@ async function handlePresenceUpdate(update: { id: string; presences: Record<stri
   if (!presence) return;
 
   if (presence === "available" || presence === "composing" || presence === "recording") {
+    // Respect per-contact tracking windows: outside a configured slot,
+    // we simply ignore online events so no session opens.
+    if (!isWithinSchedule(state.contactId)) {
+      logger.debug({ name: state.name }, "Skipping ONLINE — outside tracking window");
+      return;
+    }
     // Contact is ONLINE (composing/recording also mean online)
     if (state.offlineTimer) {
       clearTimeout(state.offlineTimer);
