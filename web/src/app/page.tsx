@@ -164,6 +164,13 @@ export default function Dashboard() {
               Contacts ({contacts.length})
             </h2>
             <button
+              onClick={() => setSelectedId(null)}
+              title="Show the live activity feed"
+              className="text-xs font-medium text-[#075E54] hover:text-[#128C7E] border border-[#E9EDEF] hover:border-[#128C7E] px-3 py-1.5 rounded-full bg-white"
+            >
+              Login Activity
+            </button>
+            <button
               onClick={() => setShowAddModal(true)}
               className="text-xs font-medium text-white bg-[#25D366] hover:bg-[#20BD5A] px-3 py-1.5 rounded-full"
             >
