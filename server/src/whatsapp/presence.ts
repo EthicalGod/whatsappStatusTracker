@@ -26,6 +26,13 @@ const contactStatus = new Map<string, {
   offlineTimer?: NodeJS.Timeout; // grace period before marking offline
 }>();
 
+// WhatsApp identifies users by TWO different JID formats:
+//   - Phone format:  "919999414559@s.whatsapp.net"  (what we subscribe with)
+//   - LID format:    "167795866263691@lid"          (what presence updates use)
+// We need to map between them. Populated from chats.update events.
+const lidToPhone = new Map<string, string>(); // lid → phone
+const phoneToLid = new Map<string, string>(); // phone → lid
+
 // Callback for real-time updates (Socket.io will register here)
 type PresenceCallback = (contactId: string, name: string, status: "online" | "offline") => void;
 const listeners: PresenceCallback[] = [];
@@ -54,22 +61,23 @@ export async function startTracking(sock: WASocket) {
   // Register presence event handler
   sock.ev.on("presence.update", handlePresenceUpdate);
 
-  // DIAGNOSTIC: log every Baileys event so we can see what's flowing
-  const interestingEvents = [
-    "presence.update",
-    "chats.update",
-    "chats.upsert",
-    "contacts.update",
-    "contacts.upsert",
-    "messages.upsert",
-  ];
-  for (const evt of interestingEvents) {
-    sock.ev.on(evt as any, (data: any) => {
-      if (evt === "presence.update") return; // already handled + logged
-      if (evt === "messages.upsert") return; // too noisy
-      logger.info({ event: evt, data }, `baileys event: ${evt}`);
-    });
-  }
+  // Build LID ↔ phone mapping from chat events.
+  // WhatsApp sends presence updates with LIDs, but we subscribe with phone JIDs.
+  sock.ev.on("chats.update" as any, (updates: any[]) => {
+    for (const chat of updates) {
+      extractJidMapping(chat);
+    }
+  });
+  sock.ev.on("chats.upsert" as any, (chats: any[]) => {
+    for (const chat of chats) {
+      extractJidMapping(chat);
+    }
+  });
+  sock.ev.on("messages.upsert" as any, ({ messages }: any) => {
+    for (const msg of messages || []) {
+      if (msg.key) extractJidMapping(msg.key);
+    }
+  });
 
   // Stagger subscriptions to avoid rate limits
   for (let i = 0; i < contacts.length; i++) {
@@ -157,17 +165,58 @@ async function resubscribeAll(sock: WASocket) {
 
 /** Extract just the phone number from any JID format. */
 function phoneFromJid(jid: string): string {
-  // JIDs come in formats: "919999414559@s.whatsapp.net", "919999414559:68@s.whatsapp.net",
-  //                       "224072738848971:68@lid", etc.
   return jid.split("@")[0].split(":")[0].replace(/\D/g, "");
 }
 
-/** Look up a tracked contact by any JID form (matches phone number). */
+/** Is this JID in LID format (@lid)? */
+function isLid(jid: string): boolean {
+  return jid.includes("@lid");
+}
+
+/**
+ * Record a LID ↔ phone mapping from anywhere both identifiers are present.
+ * Called with:  { remoteJid, remoteJidAlt }  from chats/messages events.
+ */
+function extractJidMapping(obj: any) {
+  const a = obj?.remoteJid || obj?.id;
+  const b = obj?.remoteJidAlt;
+  if (!a || !b || a === b) return;
+
+  const lid = isLid(a) ? a : (isLid(b) ? b : null);
+  const phoneJid = !isLid(a) && a.includes("@s.whatsapp.net") ? a
+                 : !isLid(b) && b.includes("@s.whatsapp.net") ? b
+                 : null;
+
+  if (lid && phoneJid) {
+    const lidKey = lid.split(":")[0] + "@lid";        // normalise (strip ":NN" suffix)
+    const phoneNum = phoneFromJid(phoneJid);
+    if (!lidToPhone.has(lidKey)) {
+      lidToPhone.set(lidKey, phoneNum);
+      phoneToLid.set(phoneNum, lidKey);
+      logger.info({ lid: lidKey, phone: phoneNum }, "Learned LID mapping");
+    }
+  }
+}
+
+/** Look up a tracked contact by any JID form (phone-based or LID). */
 function findContactByJid(jid: string) {
+  // First try direct phone number extraction
   const targetPhone = phoneFromJid(jid);
   for (const [storedJid, state] of contactStatus) {
     if (phoneFromJid(storedJid) === targetPhone) return state;
   }
+
+  // If this is a LID, resolve it to a phone number and try again
+  if (isLid(jid)) {
+    const normalisedLid = jid.split(":")[0] + "@lid";
+    const phoneFromLid = lidToPhone.get(normalisedLid);
+    if (phoneFromLid) {
+      for (const [storedJid, state] of contactStatus) {
+        if (phoneFromJid(storedJid) === phoneFromLid) return state;
+      }
+    }
+  }
+
   return undefined;
 }
 
