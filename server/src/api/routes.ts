@@ -62,6 +62,14 @@ export async function registerRoutes(app: FastifyInstance) {
     `);
   });
 
+  // JSON endpoint for the dashboard Sign In modal.
+  app.get("/api/qr/data", async () => {
+    const qr = getCurrentQR();
+    if (!qr) return { connected: true, qrDataUrl: null };
+    const qrDataUrl = await QRCode.toDataURL(qr, { width: 360, margin: 2 });
+    return { connected: false, qrDataUrl };
+  });
+
   // ── Contacts ─────────────────────────────────────────────────────
 
   app.get("/api/contacts", async () => {

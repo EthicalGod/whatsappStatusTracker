@@ -94,6 +94,9 @@ export const api = {
   whatsappLogout: () =>
     request<{ ok: boolean; message: string }>("/api/whatsapp/logout", { method: "POST" }),
 
+  getQr: () =>
+    request<{ connected: boolean; qrDataUrl: string | null }>("/api/qr/data"),
+
   getDailySummary: (date?: string) => {
     const params = date ? `?date=${date}` : "";
     return request<DailyStat[]>(`/api/analytics/summary${params}`);
