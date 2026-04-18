@@ -68,6 +68,11 @@ export function getCurrentStatuses() {
 // invoke startTracking on every reconnect without double-binding.
 const boundSockets = new WeakSet<WASocket>();
 let timersInstalled = false;
+// Identity of the last authenticated WhatsApp account (creds.me.id). If this
+// changes across reconnects (user signed out and linked a different account),
+// we must invalidate LID mappings and any cached online state — they were
+// computed relative to the previous account and will be wrong for the new one.
+let lastIdentity: string | null = null;
 
 /**
  * Attach presence tracking to a socket. Safe to call on every reconnect —
@@ -77,6 +82,32 @@ let timersInstalled = false;
 export async function startTracking(sock: WASocket) {
   if (boundSockets.has(sock)) return; // idempotent for the same socket
   boundSockets.add(sock);
+
+  // Detect a WhatsApp account switch and wipe state that belongs to the old
+  // account. LIDs are *per-account* — the same phone has a different @lid
+  // when viewed through a different logged-in account.
+  const currentIdentity = sock.authState.creds.me?.id ?? null;
+  if (lastIdentity && currentIdentity && lastIdentity !== currentIdentity) {
+    logger.warn(
+      { from: lastIdentity, to: currentIdentity },
+      "Account switched — resetting LID maps and contact presence state"
+    );
+    lidToPhone.clear();
+    phoneToLid.clear();
+    lastSubscribeAt.clear();
+    for (const [, state] of contactStatus) {
+      if (state.isOnline) {
+        db.closeSession(state.contactId).catch(() => {});
+      }
+      state.isOnline = false;
+      state.lastChange = new Date();
+      if (state.offlineTimer) {
+        clearTimeout(state.offlineTimer);
+        state.offlineTimer = undefined;
+      }
+    }
+  }
+  if (currentIdentity) lastIdentity = currentIdentity;
 
   const contacts = await db.getActiveContacts();
   logger.info({ count: contacts.length, jids: contacts.map(c => c.jid) }, "Starting presence tracking");
@@ -130,6 +161,9 @@ export async function startTracking(sock: WASocket) {
     keepSelfAvailable();
     setTimeout(() => retryLidResolution(), 20_000);
     setTimeout(() => retryLidResolution(), 60_000);
+    // Keep trying forever at 2 min cadence for any contact that's still
+    // unmapped. It's a no-op once all contacts resolve.
+    setInterval(retryLidResolution, 120_000);
     setInterval(() => resubscribeAll(), config.tracking.resubscribeIntervalMs);
     setInterval(enforceSchedules, 60_000); // close out-of-window sessions
   }
@@ -480,10 +514,12 @@ async function handlePresenceUpdate(update: { id: string; presences: Record<stri
   const jid = update.id;
   const state = findContactByJid(jid);
   if (!state) {
-    // Log dropped events for LIDs we haven't mapped — this tells us whether
-    // the mapping is the blocker vs. events genuinely not arriving.
     if (isLid(jid)) {
       logger.warn({ jid, mappedLids: Array.from(lidToPhone.keys()) }, "Dropped presence: unmapped LID");
+      // Best-effort recovery: kick a resolve for every tracked contact that
+      // still has no LID. If WhatsApp has the mapping cached now (often true
+      // after a few presence events), the very next event will route.
+      retryLidResolution().catch(() => {});
     }
     return;
   }
