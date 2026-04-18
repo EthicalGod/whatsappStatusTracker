@@ -244,8 +244,12 @@ function keepSelfAvailable() {
     lastSelfAvailable = wantAvailable;
 
     try {
-      if (wantAvailable && sock.authState.creds.me && !sock.authState.creds.me.name) {
-        // Placeholder so Baileys' "no name present" guard clears on fresh pair.
+      // Always set a fallback name on the creds, not just when going
+      // available. Baileys has internal periodic presence broadcasts that
+      // otherwise log "no name present, ignoring presence update request..."
+      // every ~30 seconds while we're idle. Setting the name is harmless
+      // (never shown to other users) and silences the noise.
+      if (sock.authState.creds.me && !sock.authState.creds.me.name) {
         sock.authState.creds.me.name = "GST Tracker";
       }
       await sock.sendPresenceUpdate(wantAvailable ? "available" : "unavailable");
