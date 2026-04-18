@@ -5,6 +5,8 @@ import { PresenceUpdate } from "@/lib/socket";
 
 interface Props {
   events: PresenceUpdate[];
+  /** Optional — shown as a back arrow at mobile widths only. */
+  onBack?: () => void;
 }
 
 function formatTime(ts: string): string {
@@ -13,7 +15,7 @@ function formatTime(ts: string): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-export function LiveActivityFeed({ events }: Props) {
+export function LiveActivityFeed({ events, onBack }: Props) {
   // Precompute per-contact online→offline durations so OFFLINE rows can show
   // "(Xs)" like the Python tracker. events is newest-first; walk it to pair
   // each OFFLINE with the most recent prior ONLINE for that contact.
@@ -38,11 +40,24 @@ export function LiveActivityFeed({ events }: Props) {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-[#F0F2F5]">
-      <div className="px-4 sm:px-6 py-3 border-b border-[#E9EDEF] bg-white">
-        <h2 className="text-sm font-semibold text-[#111B21]">Live Activity</h2>
-        <p className="text-xs text-[#667781] mt-0.5 hidden sm:block">
-          Every ONLINE / OFFLINE event across all tracked contacts, newest first.
-        </p>
+      <div className="px-3 sm:px-6 py-3 border-b border-[#E9EDEF] bg-white flex items-center gap-2">
+        {onBack && (
+          <button
+            onClick={onBack}
+            aria-label="Back to contacts"
+            className="md:hidden -ml-1 p-1.5 rounded-full hover:bg-[#F0F2F5]"
+          >
+            <svg className="w-5 h-5 text-[#111B21]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+        )}
+        <div className="flex-1 min-w-0">
+          <h2 className="text-sm font-semibold text-[#111B21]">Live Activity</h2>
+          <p className="text-xs text-[#667781] mt-0.5 hidden sm:block">
+            Every ONLINE / OFFLINE event across all tracked contacts, newest first.
+          </p>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 sm:px-6 py-2 sm:py-3">

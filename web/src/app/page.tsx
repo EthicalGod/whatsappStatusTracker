@@ -18,6 +18,10 @@ export default function Dashboard() {
   const [showSchedule, setShowSchedule] = useState(false);
   const [connected, setConnected] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  // On mobile we have ONE panel visible at a time — this picks whether the
+  // default (no-contact-selected) panel is the contact list or the live feed.
+  // Desktop ignores this: sidebar is always the list, right pane the feed.
+  const [mobileView, setMobileView] = useState<"contacts" | "feed">("contacts");
   // Activity feed buffer lives here (not in LiveActivityFeed) so events
   // persist across contact-detail tab switches.
   const [events, setEvents] = useState<PresenceUpdate[]>([]);
@@ -162,10 +166,11 @@ export default function Dashboard() {
           selected; detail slides in when a contact is picked. md+: classic
           two-panel split. */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar */}
+        {/* Sidebar — contact list. Hidden on mobile when a contact is
+            selected OR when the user has swapped to the feed view. */}
         <div
           className={`${
-            selectedId ? "hidden md:flex" : "flex"
+            selectedId || mobileView === "feed" ? "hidden md:flex" : "flex"
           } w-full md:w-80 lg:w-96 flex-col border-r border-[#E9EDEF] bg-white md:flex-shrink-0`}
         >
           <div className="px-4 py-3 border-b border-[#E9EDEF] flex items-center gap-2">
@@ -173,7 +178,10 @@ export default function Dashboard() {
               Contacts ({contacts.length})
             </h2>
             <button
-              onClick={() => setSelectedId(null)}
+              onClick={() => {
+                setSelectedId(null);
+                setMobileView("feed");
+              }}
               title="Show the live activity feed"
               className="text-xs font-medium text-[#075E54] hover:text-[#128C7E] border border-[#E9EDEF] hover:border-[#128C7E] px-3 py-1.5 rounded-full bg-white whitespace-nowrap"
             >
@@ -201,10 +209,11 @@ export default function Dashboard() {
           />
         </div>
 
-        {/* Detail panel */}
+        {/* Main right pane. Shown on desktop always. On mobile: shown when
+            a contact is selected, OR when the user switched to the feed. */}
         <div
           className={`${
-            selectedId ? "flex" : "hidden md:flex"
+            selectedId || mobileView === "feed" ? "flex" : "hidden md:flex"
           } flex-1 flex-col bg-[#F0F2F5]`}
         >
           {selectedId ? (
@@ -219,7 +228,10 @@ export default function Dashboard() {
               }}
             />
           ) : (
-            <LiveActivityFeed events={events} />
+            <LiveActivityFeed
+              events={events}
+              onBack={() => setMobileView("contacts")}
+            />
           )}
         </div>
       </div>
