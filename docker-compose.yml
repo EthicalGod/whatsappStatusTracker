@@ -43,6 +43,10 @@ services:
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY}
       VAPID_EMAIL: ${VAPID_EMAIL}
+      # Schedule times in the UI are wall-clock (e.g. "10:00"). The server
+      # must evaluate them in the same timezone the user typed them in, or
+      # schedules will appear shifted. Defaults to Asia/Kolkata (IST).
+      TZ: ${TZ:-Asia/Kolkata}
     depends_on:
       postgres:
         condition: service_healthy
