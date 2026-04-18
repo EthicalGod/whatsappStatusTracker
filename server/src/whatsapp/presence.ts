@@ -197,13 +197,12 @@ async function retryLidResolution() {
  */
 /**
  * Decide whether the tracker account should be marked "available" to
- * WhatsApp right now. With a single global schedule:
- *  - No schedule configured (empty) → always available (24/7 tracking).
+ * WhatsApp right now. Slots are strictly opt-in:
+ *  - No schedule configured (empty) → tracker is OFF (broadcast unavailable).
  *  - Schedule configured → available only when the current time falls
  *    inside at least one of the global slots.
  */
 function shouldSelfBeAvailable(): boolean {
-  if (!hasSchedules()) return true;
   return isWithinSchedule();
 }
 
@@ -211,14 +210,24 @@ function shouldSelfBeAvailable(): boolean {
 // round of `presenceSubscribe()` (WhatsApp drops subs when we go offline).
 let lastSelfAvailable: boolean | null = null;
 
+// Holds the active trySend closure so forceAvailabilityReevaluation can
+// fire an immediate tick instead of waiting for the 60-second interval.
+let pokeSelfAvailable: (() => Promise<void>) | null = null;
+
 /**
- * Reset the memo so the next `keepSelfAvailable` tick re-evaluates from
- * scratch. Call this whenever the schedule cache changes (e.g. the user
- * saves a new schedule) so the transition re-fires subscriptions even
- * inside a 60-second poll window.
+ * Reset the memo AND fire an immediate availability tick. Call this
+ * whenever the schedule cache changes (e.g. the user saves a new schedule)
+ * so transitions into/out of a slot take effect within seconds rather
+ * than up to 60s (the normal tick interval).
  */
 export function forceAvailabilityReevaluation() {
   lastSelfAvailable = null;
+  if (pokeSelfAvailable) {
+    pokeSelfAvailable().catch(() => {});
+  }
+  // Also close any session that the new schedule says should be closed,
+  // without waiting for the next 60-second enforceSchedules tick.
+  enforceSchedules().catch(() => {});
 }
 
 function keepSelfAvailable() {
@@ -240,12 +249,15 @@ function keepSelfAvailable() {
         sock.authState.creds.me.name = "GST Tracker";
       }
       await sock.sendPresenceUpdate(wantAvailable ? "available" : "unavailable");
-      logger.debug({ wantAvailable }, "Self presence update sent");
+      if (prev !== wantAvailable) {
+        logger.info({ wantAvailable }, "Self presence flipped");
+      }
 
-      // Idle → active transition: re-subscribe to every tracked contact so
-      // WhatsApp restarts pushing us their presence.
-      if (wantAvailable && prev === false) {
-        logger.info("Re-entering tracking window — re-subscribing all contacts");
+      // Transitioning back into a tracking window — re-subscribe to every
+      // tracked contact so WhatsApp resumes pushing their presence. Also
+      // true on the very first tick after boot (prev === null).
+      if (wantAvailable && prev !== true) {
+        logger.info("Entering tracking window — re-subscribing all contacts");
         resubscribeAll().catch(() => {});
       }
     } catch (err: any) {
@@ -256,8 +268,9 @@ function keepSelfAvailable() {
     }
   };
 
+  pokeSelfAvailable = trySend;
   setTimeout(trySend, 3000);
-  setInterval(trySend, 60_000);
+  setInterval(trySend, 30_000); // tighter cadence = less drift at slot edges
 }
 
 /** Wrap a promise with a timeout so a stuck Baileys call can't hang us. */

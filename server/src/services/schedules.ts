@@ -29,10 +29,14 @@ export async function refreshScheduleCache() {
 
 /**
  * True if tracking should be active right now.
- * Empty schedule = 24/7 tracking (no restriction).
+ *
+ * Semantics: no slots configured means tracking is OFF. The tracker only
+ * runs during explicitly configured windows — this protects the user's
+ * own WhatsApp from appearing "online" 24/7 by default, and ensures
+ * activity is only recorded inside the windows they chose.
  */
 export function isWithinSchedule(_contactId?: string, at: Date = new Date()): boolean {
-  if (cache.length === 0) return true; // unrestricted
+  if (cache.length === 0) return false; // no slots => tracker idle
   const dow = at.getDay();
   const mins = at.getHours() * 60 + at.getMinutes();
   return cache.some(
