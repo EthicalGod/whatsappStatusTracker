@@ -117,4 +117,12 @@ export const api = {
     const params = date ? `?date=${date}` : "";
     return request<DailyStat[]>(`/api/analytics/summary${params}`);
   },
+
+  getActivity: (limit = 500) =>
+    request<Array<{ contactId: string; name: string; status: "online" | "offline"; timestamp: string }>>(
+      `/api/activity?limit=${limit}`
+    ),
+
+  resetActivity: () =>
+    request<{ ok: boolean }>("/api/activity", { method: "DELETE" }),
 };

@@ -7,6 +7,8 @@ interface Props {
   events: PresenceUpdate[];
   /** Optional — shown as a back arrow at mobile widths only. */
   onBack?: () => void;
+  /** Wipe all activity history (presence_logs). */
+  onReset?: () => void;
 }
 
 function formatTime(ts: string): string {
@@ -15,7 +17,7 @@ function formatTime(ts: string): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-export function LiveActivityFeed({ events, onBack }: Props) {
+export function LiveActivityFeed({ events, onBack, onReset }: Props) {
   // Precompute per-contact online→offline durations so OFFLINE rows can show
   // "(Xs)" like the Python tracker. events is newest-first; walk it to pair
   // each OFFLINE with the most recent prior ONLINE for that contact.
@@ -58,6 +60,15 @@ export function LiveActivityFeed({ events, onBack }: Props) {
             Every ONLINE / OFFLINE event across all tracked contacts, newest first.
           </p>
         </div>
+        {onReset && (
+          <button
+            onClick={onReset}
+            title="Clear activity log"
+            className="text-xs font-medium text-[#075E54] hover:text-white hover:bg-[#d32f2f] border border-[#E9EDEF] hover:border-[#d32f2f] px-3 py-1.5 rounded-full bg-white whitespace-nowrap transition-colors"
+          >
+            Reset
+          </button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 sm:px-6 py-2 sm:py-3">

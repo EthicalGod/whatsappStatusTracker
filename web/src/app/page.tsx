@@ -56,6 +56,13 @@ export default function Dashboard() {
     loadContacts();
   }, [loadContacts]);
 
+  // Seed activity feed from DB on mount so history is visible immediately
+  useEffect(() => {
+    api.getActivity().then((rows) => {
+      setEvents(rows as PresenceUpdate[]);
+    }).catch(() => {});
+  }, []);
+
   // Real-time presence updates via Socket.io
   useEffect(() => {
     const socket = getSocket();
@@ -214,7 +221,7 @@ export default function Dashboard() {
         <div
           className={`${
             selectedId || mobileView === "feed" ? "flex" : "hidden md:flex"
-          } flex-1 flex-col bg-[#F0F2F5]`}
+          } flex-1 flex-col overflow-hidden bg-[#F0F2F5]`}
         >
           {selectedId ? (
             <ContactDetail
@@ -231,6 +238,15 @@ export default function Dashboard() {
             <LiveActivityFeed
               events={events}
               onBack={() => setMobileView("contacts")}
+              onReset={async () => {
+                if (!confirm("Clear the entire Live Activity log? This deletes all stored ONLINE/OFFLINE events. Contacts and session history are kept.")) return;
+                try {
+                  await api.resetActivity();
+                  setEvents([]);
+                } catch (err: any) {
+                  alert("Reset failed: " + (err.message || "unknown error"));
+                }
+              }}
             />
           )}
         </div>

@@ -207,6 +207,25 @@ export async function registerRoutes(app: FastifyInstance) {
     return db.getAllDailyStats(date);
   });
 
+  // ── Activity log (for seeding the Live Activity Feed) ───────────
+  app.get<{ Querystring: { limit?: string } }>("/api/activity", async (req) => {
+    const limit = Math.min(parseInt(req.query.limit || "500", 10) || 500, 1000);
+    const rows = await db.getRecentActivityLog(limit);
+    return rows.map((r) => ({
+      contactId: r.contactId,
+      name: r.name,
+      status: r.status,
+      timestamp: r.timestamp.toISOString(),
+    }));
+  });
+
+  // Wipe only the presence_logs table. Leaves sessions, daily_stats,
+  // contacts, and the WhatsApp auth intact.
+  app.delete("/api/activity", async () => {
+    await db.clearActivityLog();
+    return { ok: true };
+  });
+
   // ── CSV export ───────────────────────────────────────────────────
   //
   // Columns (matches the legacy whatsapp_activity.csv format):
@@ -235,7 +254,7 @@ export async function registerRoutes(app: FastifyInstance) {
     }
 
     const { rows } = await pool.query(
-      `SELECT c.name AS label, s.start_time, s.end_time, s.duration_s
+      `SELECT c.name AS label, SPLIT_PART(c.jid, '@', 1) AS phone, s.start_time, s.end_time, s.duration_s
          FROM sessions s
          JOIN contacts c ON c.id = s.contact_id
         WHERE ${conditions.join(" AND ")}
@@ -251,11 +270,12 @@ export async function registerRoutes(app: FastifyInstance) {
     const escape = (v: string) =>
       /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
 
-    const lines = ["label,start_time,end_time,duration_seconds"];
+    const lines = ["label,phone,start_time,end_time,duration_seconds"];
     for (const r of rows) {
       lines.push(
         [
           escape(r.label),
+          r.phone,
           fmt(new Date(r.start_time)),
           fmt(new Date(r.end_time)),
           r.duration_s,

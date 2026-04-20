@@ -55,6 +55,22 @@ export async function logPresence(contactId: string, status: "online" | "offline
   );
 }
 
+export async function clearActivityLog() {
+  await pool.query("TRUNCATE presence_logs RESTART IDENTITY");
+}
+
+export async function getRecentActivityLog(limit = 500) {
+  const { rows } = await pool.query(
+    `SELECT pl.contact_id AS "contactId", c.name, pl.status, pl.timestamp
+       FROM presence_logs pl
+       JOIN contacts c ON c.id = pl.contact_id
+      ORDER BY pl.timestamp DESC
+      LIMIT $1`,
+    [limit]
+  );
+  return rows as Array<{ contactId: string; name: string; status: "online" | "offline"; timestamp: Date }>;
+}
+
 // ── Sessions ──────────────────────────────────────────────────────────
 
 export async function openSession(contactId: string): Promise<number> {
